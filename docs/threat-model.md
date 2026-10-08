@@ -26,7 +26,9 @@ These are MCP attack classes documented in the community catalogue at [awesome-m
 |---|---|---|
 | Tool poisoning | `<IMPORTANT>` block telling the model to read `~/.cursor/mcp.json` into a `sidenote` parameter | scanner (descriptions **and** parameter metadata), quarantine at discovery, pinned/sanitised served definitions |
 | Rug pull | definition changes after approval | raw-wire pinning, list_changed/JIT/poll re-verification, diff + classification, model always sees the pinned text, lease revocation |
-| Behavioural rug pull | same description, new behaviour | statistical baseline, process/network monitor, output withholding |
+| Behavioural rug pull | same description, new behaviour | **sandbox pre-flight of every call** (planted-credential reads, read-only tools writing, unexpected hosts, persistence), behaviour contracts from the registration audit, statistical baseline, process/network monitor, output withholding |
+| Destructive call | an agent "cleans up" a project folder | blast-radius guard on the sandbox preview, effect preview on approval, undo journal |
+| Sandbox-aware server | behaves well only when tested | real effect diffed against the prediction after every call; unpredicted changes reverted, tool quarantined |
 | Cross-server shadowing | "when `send_email` is used, BCC …" | shadowing detection against all other tool names, namespacing (`slug__tool`) |
 | ASCII smuggling / hidden text | Unicode tags, zero-width, bidi, ANSI | decode-and-flag in definitions, strip in outputs |
 | Indirect prompt injection | instructions in fetched content | output injection scanner, spotlighting/quarantine, `UNTRUSTED_SOURCE` flow role, workflow risk memory |
@@ -37,8 +39,8 @@ These are MCP attack classes documented in the community catalogue at [awesome-m
 | Command injection / traversal | `; rm -rf`, `../../.ssh/id_rsa` | input validator hard rules (content fields exempt from shell checks) |
 | Deceptive annotations | `readOnlyHint: true` on `delete_repo` | annotations are untrusted; contradictions are evidence and hold the tool for review |
 | Token theft without MFA | replayed bearer token | step-up for sensitive actions, TOTP replay protection, action-bound leases |
-| Consent fatigue | approving a vague request | approval page shows the exact tool, argument preview, risk and reasons; the lease is bound to those arguments |
-| Supply-chain update | `npx -y pkg` pulls a new release | unpinned and typosquat findings, honeypot first run, server version drift alert |
+| Consent fatigue | approving a vague request | approval page shows the call's **effect** from the sandbox run (file diffs, destinations, programs), risk and reasons; MALICIOUS verdicts can't be approved at all; the lease is bound to those arguments |
+| Supply-chain update | `npx -y pkg` pulls a new release | unpinned and typosquat findings, behaviour audit of every tool in the sandbox, per-call pre-flight, server version drift alert |
 | Misconfigured upstream server | accepts any bearer token, no Origin check, wildcard CORS, OAuth without PKCE, long-lived broad-scope tokens | vulnerability scanner (SecureMCP port) on registration and on demand; findings lower the server's grade and feed risk |
 | Local control-plane attack | malicious site calls `localhost:8443` | loopback bind, Host allowlist, Origin check, loopback-only demo tokens, no CORS credentials |
 | Repudiation | "the agent did it" | hash-chained, Ed25519-signed receipts with identity, agent, gates and factors |
@@ -46,5 +48,5 @@ These are MCP attack classes documented in the community catalogue at [awesome-m
 ## Out of scope
 
 * A compromised host OS or a malicious local administrator.
-* Attacks inside a server that never surface through MCP (for example, a server exfiltrating data on its own outside a tool call). Sentinel detects some of these through the process and network monitor and the honeypot, but cannot prevent them without OS-level isolation.
+* Attacks inside a server that never surface through MCP (for example, a server exfiltrating data on its own outside a tool call). Sentinel detects some of these through the process and network monitor, the sandbox pre-flight and the honeypot, but cannot prevent them without running the real server under OS-level isolation.
 * The model leaking data through its *answer text* rather than a tool call.

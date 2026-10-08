@@ -60,6 +60,7 @@ class PreflightGuard:
         self.cp = gateway.cp
         self.settings = gateway.settings
         self.sandbox = get_sandbox(self.settings)
+        self._held: list[CallContext] = []
 
     def applies(self, server: ServerRow | None, tool: ToolRow | None) -> bool:
         return bool(self.sandbox.enabled and server is not None and tool is not None and (server.transport or "") == "stdio")
@@ -67,6 +68,16 @@ class PreflightGuard:
     # -- before the real call ------------------------------------------------------------------
     def check(self, server: ServerRow, tool: ToolRow, request: ToolCallRequest, decision: SecurityDecision,
               identity: IdentityContext | None) -> tuple[CallContext | None, SecurityDecision, dict[str, Any] | None]:
+        try:
+            return self._check(server, tool, request, decision, identity)
+        except Exception:
+            # never leave the server's verification lock held; the caller's error handling decides the call
+            for held in self._held:
+                held.release()
+            raise
+
+    def _check(self, server: ServerRow, tool: ToolRow, request: ToolCallRequest, decision: SecurityDecision,
+               identity: IdentityContext | None) -> tuple[CallContext | None, SecurityDecision, dict[str, Any] | None]:
         _, config = server_connection_config(server)
         meta = server.metadata_json or {}
         profile = tool_profile(tool)
@@ -79,6 +90,7 @@ class PreflightGuard:
             pf: dict[str, Any] = {"verdict": "INCONCLUSIVE", "reasons": [f"sandbox error: {exc}"[:300]], "findings": [],
                                   "preview": {"headline": "Not verified in the sandbox", "files": []}, "backend": "none"}
         else:
+            self._held.append(ctx)
             pf = ctx.preflight or {}
         if not pf:
             return ctx, decision, None

@@ -2,10 +2,12 @@ import { useState } from "react";
 import { api, usePoll } from "../api.js";
 import { Card, Empty, ErrorNote, Json, Meter, Pill } from "../components/ui.jsx";
 import { routeTo, timeAgo } from "../format.js";
+import { SandboxPreview } from "../components/sandbox.jsx";
 
 export function ApprovalPage({ kind, id, session, toast }) {
   const item = usePoll(() => api.get(kind === "mfa" ? `/v1/mfa/challenges/${id}` : `/v1/approvals/${id}`), [kind, id, session.token], 2000);
   const totp = usePoll(() => (session.token ? api.get("/v1/mfa/totp/status") : Promise.resolve(null)), [session.token]);
+  const runs = usePoll(() => api.get(`/v1/sandbox/runs?${kind === "mfa" ? "challenge_id" : "approval_id"}=${id}&limit=1`), [kind, id], 5000);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -37,6 +39,11 @@ export function ApprovalPage({ kind, id, session, toast }) {
         </div>
         <Pill value={d.status} />
       </div>
+      {(d.sandbox || runs.data?.[0]) && (
+        <Card title="What this call would do" subtitle="Sentinel already ran it once in the sandbox, against a copy of your files with decoy credentials and no real network">
+          <SandboxPreview sandbox={d.sandbox || runs.data[0]} />
+        </Card>
+      )}
       <div className="grid-2">
         <Card title="Requested action">
           <dl className="kv">

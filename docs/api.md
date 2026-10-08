@@ -40,7 +40,8 @@ The response contains:
 | PATCH / DELETE | `/v1/servers/{id}` | edit (enable, slug, config) or remove |
 | POST | `/v1/servers/{id}/discover` | re-list the server now and run the rug-pull analysis |
 | POST | `/v1/servers/{id}/scan` | vulnerability scan `{"active": false}`; the latest grade is shown on the server |
-| POST | `/v1/servers/{id}/sandbox` | run the honeypot sandbox |
+| POST | `/v1/servers/{id}/sandbox` | run the honeypot |
+| POST | `/v1/servers/{id}/audit` | behaviour audit: exercise every tool in the sandbox on a synthetic workspace (`?wait=true` to run synchronously); the result is in the server view as `behavior_audit` |
 | POST | `/v1/servers/{id}/verify` | legacy synthetic verification probe |
 | PUT | `/v1/servers/{id}/trust` | manual trust status |
 | GET | `/v1/servers/{id}/logs` | upstream stderr and log notifications |
@@ -50,6 +51,19 @@ The response contains:
 | GET | `/v1/integrity/changes` · `/{id}` | rug-pull ledger with structured diffs |
 | POST | `/v1/integrity/changes/{id}/resolve` | `{"action": "accept" \| "reject"}` (accept re-pins only while the live definition still matches) |
 | GET | `/v1/integrity/toxic-flows` | toolset-wide lethal-trifecta and toxic-flow analysis with remediation |
+
+## Sandbox pre-flight and undo
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/v1/sandbox/status` | active backend (docker / process / off), Docker and image state, image build progress, limits |
+| POST | `/v1/sandbox/image/build` | build the sandbox runtime image (admin) |
+| GET | `/v1/sandbox/runs?server_id=&verdict=&approval_id=&challenge_id=&receipt_id=` | pre-flight history: verdict, action (ALLOWED / ESCALATED / BLOCKED / NOT_RUN), findings and effect preview |
+| GET | `/v1/sandbox/runs/{run_id}` | one run |
+| GET | `/v1/undo?server_id=` · `/v1/undo/{receipt_id}` | undo journal: the file changes each executed call made |
+| POST | `/v1/undo/{receipt_id}` | restore the previous versions and remove created files (admin); files changed again since are reported as conflicts |
+
+`POST /v1/mcp/tools/call` responses include `sandbox` (verdict, action, preview) and, when files changed, `output_report.undo_id`; `output_report.sandbox_evasion` is set when the real call did more than the sandbox predicted. Approval views (`/v1/approvals/{id}`) carry the same `sandbox` preview.
 
 ## Vulnerability scans
 

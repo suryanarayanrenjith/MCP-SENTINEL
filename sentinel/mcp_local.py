@@ -51,22 +51,27 @@ class LocalBackend:
         outcome = self._invoke(name, arguments)
         if outcome is None:
             return text_result(f"Unknown tool '{name}'. Call sentinel_discover_tools for the current list.", True)
-        decision = outcome.decision
-        pending = None
-        if decision.decision == Decision.MFA_REQUIRED and decision.mfa_challenge_id:
-            pending = ("mfa", decision.mfa_challenge_id)
-        elif decision.decision == Decision.HUMAN_APPROVAL and decision.approval_id:
-            pending = ("approval", decision.approval_id)
-        if pending and self.settings.approval_wait_seconds > 0:
+        # hold the call while a person acts; a step-up can be followed by a sandbox escalation, so up to 3 rounds
+        for _ in range(3):
+            decision = outcome.decision
+            pending = None
+            if decision.decision == Decision.MFA_REQUIRED and decision.mfa_challenge_id:
+                pending = ("mfa", decision.mfa_challenge_id)
+            elif decision.decision == Decision.HUMAN_APPROVAL and decision.approval_id:
+                pending = ("approval", decision.approval_id)
+            if not pending or self.settings.approval_wait_seconds <= 0:
+                break
             status = wait_for_stepup(
                 kind=pending[0], ident=pending[1], url=outcome.approval_url,
                 poll=lambda k, i: poll_status(self.store, self.settings, k, i),
                 ctx=ctx, wait_seconds=self.settings.approval_wait_seconds,
             )
-            if status in {"SATISFIED", "APPROVED"}:
-                retried = self._invoke(name, arguments)
-                if retried is not None:
-                    outcome = retried
+            if status not in {"SATISFIED", "APPROVED"}:
+                break
+            retried = self._invoke(name, arguments)
+            if retried is None:
+                break
+            outcome = retried
         return outcome.mcp_result(self.settings.result_banner)
 
     def _identity(self):
