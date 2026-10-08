@@ -55,7 +55,6 @@ The response contains:
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/v1/scans` | scan a server without registering it (`transport`, `endpoint` or `command`/`args`/`env`, `headers`, `bearer_token`, `active`) |
 | GET | `/v1/scans?server_id=` | scan history (grade, worst severity, counts) |
 | GET | `/v1/scans/{id}` | full report |
 | GET | `/v1/scans/{id}/report.html` · `/report.json` | downloadable reports (`?download=1` for an attachment); HTML is served with a no-script CSP |

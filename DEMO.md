@@ -191,7 +191,7 @@ For a server with real problems, start the official reference server in HTTP mod
 PORT=3001 npx -y @modelcontextprotocol/server-everything@2026.8.31 streamableHttp
 ```
 
-**Scanner → Scan a server without adding it →** `http://127.0.0.1:3001/mcp`. Expected grade **D**:
+**Servers → Add server → Remote →** `http://127.0.0.1:3001/mcp` (name *Everything HTTP*). The server is added and scanned in the same step; the result dialog shows the verdict **CAUTION** with grade **D** and a numbered list of recommended fixes:
 
 | Finding | Why |
 |---|---|
@@ -200,12 +200,9 @@ PORT=3001 npx -y @modelcontextprotocol/server-everything@2026.8.31 streamableHtt
 | MEDIUM — CORS allows any origin | `Access-Control-Allow-Origin: *` |
 | MEDIUM — `get-env` returns secrets to the model | capability analysis |
 
-Click **Open report** for the standalone HTML report. The same scan from the CLI:
+The trifecta is listed under *contained at runtime* rather than making the server unsafe: taint tracking blocks the actual exfiltration path (Act 5). A HIGH or CRITICAL defect in the server itself (for example an authentication bypass, a poisoned tool or a tool that misbehaves in the sandbox audit) turns the verdict into **NOT SAFE**. The server is still added, but its sensitive tools stay restricted until the issue is fixed or an administrator accepts the risk by setting its trust back to *Trusted*.
 
-```bash
-mcp-sentinel scan http://127.0.0.1:3001/mcp --report html
-mcp-sentinel scan --active -- npx -y @modelcontextprotocol/server-memory@2026.8.31
-```
+Open **Scanner** and click the grade for the standalone HTML report.
 
 ---
 

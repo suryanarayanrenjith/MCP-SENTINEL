@@ -6,16 +6,17 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from integrity.vulnscan import ScanReport, scan_config
+from sentinel import safety
 from sentinel.config import Settings, get_settings
 from sentinel.db import ServerRow, ToolRow, VulnScanRow
 from sentinel.deps import admin_identity, db_session, reader
 from sentinel.receipts import AuditStore
 from sentinel.secrets_box import decrypt_json
-from sentinel.types import utcnow
+from sentinel.types import TrustStatus, utcnow
 from sentinel.upstream import get_manager
 
 router = APIRouter()
@@ -23,19 +24,6 @@ REPORT_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base
 
 
 class ServerScanBody(BaseModel):
-    active: bool = False
-
-
-class AdhocScanBody(BaseModel):
-    name: str = ""
-    transport: str = "http"
-    endpoint: str = ""
-    command: str = ""
-    args: list[str] = Field(default_factory=list)
-    env: dict[str, str] = Field(default_factory=dict)
-    headers: dict[str, str] = Field(default_factory=dict)
-    bearer_token: str = ""
-    verify_tls: bool = True
     active: bool = False
 
 
@@ -88,7 +76,26 @@ def run_server_scan(session: Session, row: ServerRow, *, active: bool, by: str, 
             client = None
     report = scan_config(config, transport, name=row.server_name, active=active, client=client, other_tool_names=others,
                          timeout=min(settings.upstream_timeout_seconds, 30.0), server_id=row.server_id)
-    return store_scan(session, report, row.server_id, by)
+    scan = store_scan(session, report, row.server_id, by)
+    apply_safety(session, row, scan.report)
+    return scan
+
+
+def apply_safety(session: Session, row: ServerRow, report: dict[str, Any]) -> dict[str, Any]:
+    """Condense scan + honeypot + sandbox audit + supply chain into the server's safety verdict."""
+    meta = dict(row.metadata_json or {})
+    verdict = safety.assess(scan=report, findings=row.findings or [], honeypot=meta.get("sandbox_report"),
+                            audit=meta.get("behavior_audit"))
+    meta["safety"] = verdict
+    row.metadata_json = meta
+    accepted = set(meta.get("safety_accepted") or [])
+    new_issues = set(safety.blocking_reasons(verdict)) - accepted
+    if verdict["verdict"] == "UNSAFE" and new_issues and row.trust_status in {TrustStatus.TRUSTED.value, TrustStatus.MONITORED.value}:
+        row.trust_status = TrustStatus.RESTRICTED.value
+        AuditStore(session).write_event("server_unsafe", "HIGH", f"{row.server_name} is not safe to use: {verdict['reasons'][0] if verdict['reasons'] else 'severe findings'}",
+                                        {"server_id": row.server_id, "safety": verdict})
+    session.commit()
+    return verdict
 
 
 @router.post("/v1/servers/{server_id}/scan")
@@ -98,31 +105,7 @@ def scan_server(server_id: str, body: ServerScanBody, session: Session = Depends
     if not row:
         raise HTTPException(404, f"Server {server_id} not found")
     scan = run_server_scan(session, row, active=body.active, by=identity.subject, settings=settings)
-    return {**scan_view(scan), "report": scan.report}
-
-
-@router.post("/v1/scans")
-def scan_adhoc(body: AdhocScanBody, session: Session = Depends(db_session), settings: Settings = Depends(get_settings),
-               identity=Depends(admin_identity)) -> dict[str, Any]:
-    """Scan a server without registering it (like ``mcp-sentinel scan``)."""
-    transport = (body.transport or "http").lower()
-    if transport == "stdio":
-        if not settings.allow_stdio_servers:
-            raise HTTPException(403, "local stdio servers are disabled on this Sentinel (SENTINEL_ALLOW_STDIO_SERVERS=false)")
-        if not body.command.strip():
-            raise HTTPException(422, "stdio scans need a command")
-        config: dict[str, Any] = {"command": body.command.strip(), "args": list(body.args), "env": dict(body.env)}
-    else:
-        if not body.endpoint.startswith(("http://", "https://")):
-            raise HTTPException(422, "HTTP/SSE scans need an http(s):// URL")
-        headers = dict(body.headers)
-        if body.bearer_token:
-            headers["Authorization"] = f"Bearer {body.bearer_token}"
-        config = {"url": body.endpoint, "headers": headers, "verify_tls": body.verify_tls}
-    report = scan_config(config, transport, name=body.name or "", active=body.active,
-                         timeout=min(settings.upstream_timeout_seconds, 30.0))
-    scan = store_scan(session, report, None, identity.subject)
-    return {**scan_view(scan), "report": scan.report}
+    return {**scan_view(scan), "report": scan.report, "safety": (row.metadata_json or {}).get("safety")}
 
 
 @router.get("/v1/scans")

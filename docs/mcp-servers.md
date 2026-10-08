@@ -37,4 +37,4 @@ Servers that **only** offer an interactive OAuth login (no static token) are not
 * **Windows:** use `npx` / `uvx` as usual; Sentinel resolves `npx.cmd`. If a launcher isn't found, give its absolute path.
 * **First launch of an `npx`/`uvx` server** downloads the package; registration waits up to `SENTINEL_UPSTREAM_CONNECT_TIMEOUT_SECONDS` (90 s).
 * If `npx` reports `ENOTEMPTY` or `ERR_MODULE_NOT_FOUND` inside `~/.npm/_npx`, an install was interrupted. Delete that folder and retry (Sentinel's error message says so).
-* Run `mcp-sentinel scan -- <command …>` or `mcp-sentinel scan <url>` to vulnerability-scan a server *before* adding it.
+* Every server is vulnerability-scanned as it is added; the add dialog shows a SAFE / CAUTION / NOT SAFE verdict and the recommended fixes.

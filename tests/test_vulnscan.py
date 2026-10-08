@@ -109,4 +109,5 @@ def test_scan_api_and_report_download(client):
     assert page.status_code == 200 and "default-src 'none'" in page.headers["content-security-policy"]
     assert client.get(f"/v1/scans/{out['scan_id']}/report.json").json()["scan_id"] == out["scan_id"]
     assert any(s["scan_id"] == out["scan_id"] for s in client.get("/v1/scans", params={"server_id": client.server_id}).json())
-    assert client.post("/v1/scans", headers=headers("ANALYST"), json={"endpoint": "http://x.example/mcp"}).status_code == 403
+    assert client.post(f"/v1/servers/{client.server_id}/scan", headers=headers("ANALYST"), json={}).status_code == 403
+    assert out["safety"]["verdict"] in {"SAFE", "CAUTION", "UNSAFE"} and out["safety"]["recommendations"]

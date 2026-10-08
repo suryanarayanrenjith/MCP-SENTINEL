@@ -163,11 +163,11 @@ code, .mono { font-family: var(--font-mono); font-size: 12.5px; }
   padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.02em;
   border: 1px solid var(--border-strong); color: var(--ink-2); background: var(--surface-2);
 }
-.pill.ALLOW, .pill.TRUSTED, .pill.NORMAL, .pill.CLEAN, .pill.APPROVED, .pill.ACCEPTED, .pill.SATISFIED, .pill.ACTIVE, .pill.LOW, .pill.COSMETIC, .pill.AUTO_ACCEPTED { border-color: color-mix(in srgb, var(--good) 60%, transparent); color: var(--good-text); background: color-mix(in srgb, var(--good) 12%, transparent); }
-.pill.MONITOR, .pill.MONITORED, .pill.INFO, .pill.BENIGN, .pill.EXPIRING, .pill.MEDIUM { border-color: color-mix(in srgb, var(--info) 60%, transparent); color: var(--info); background: color-mix(in srgb, var(--info) 12%, transparent); }
-.pill.RESTRICT, .pill.RESTRICTED, .pill.SUSPICIOUS, .pill.CHANGED, .pill.PENDING_REVIEW, .pill.PENDING, .pill.ELEVATED, .pill.REQUIRE_APPROVAL, .pill.REQUIRE_MFA, .pill.OPEN { border-color: color-mix(in srgb, var(--warning) 60%, transparent); color: var(--warn-text); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.pill.SAFE, .pill.ALLOW, .pill.TRUSTED, .pill.NORMAL, .pill.CLEAN, .pill.APPROVED, .pill.ACCEPTED, .pill.SATISFIED, .pill.ACTIVE, .pill.LOW, .pill.COSMETIC, .pill.AUTO_ACCEPTED { border-color: color-mix(in srgb, var(--good) 60%, transparent); color: var(--good-text); background: color-mix(in srgb, var(--good) 12%, transparent); }
+.pill.INCONCLUSIVE, .pill.RESTORED, .pill.MONITOR, .pill.MONITORED, .pill.INFO, .pill.BENIGN, .pill.EXPIRING, .pill.MEDIUM { border-color: color-mix(in srgb, var(--info) 60%, transparent); color: var(--info); background: color-mix(in srgb, var(--info) 12%, transparent); }
+.pill.CAUTION, .pill.RESTRICT, .pill.RESTRICTED, .pill.SUSPICIOUS, .pill.CHANGED, .pill.PENDING_REVIEW, .pill.PENDING, .pill.ELEVATED, .pill.REQUIRE_APPROVAL, .pill.REQUIRE_MFA, .pill.OPEN { border-color: color-mix(in srgb, var(--warning) 60%, transparent); color: var(--warn-text); background: color-mix(in srgb, var(--warning) 12%, transparent); }
 .pill.MFA_REQUIRED, .pill.HUMAN_APPROVAL, .pill.HIGH, .pill.HIGH_RISK, .pill.MFA { border-color: color-mix(in srgb, var(--serious) 70%, transparent); color: var(--serious); background: color-mix(in srgb, var(--serious) 12%, transparent); }
-.pill.BLOCK, .pill.BLOCKED, .pill.QUARANTINED, .pill.QUARANTINE, .pill.CRITICAL, .pill.MALICIOUS, .pill.MALICIOUS_OR_COMPROMISED, .pill.REJECTED, .pill.DENIED, .pill.REVOKED, .pill.DENY, .pill.EXPIRED { border-color: color-mix(in srgb, var(--critical) 70%, transparent); color: var(--danger-text); background: color-mix(in srgb, var(--critical) 14%, transparent); }
+.pill.UNSAFE, .pill.DANGEROUS, .pill.BLOCK, .pill.BLOCKED, .pill.QUARANTINED, .pill.QUARANTINE, .pill.CRITICAL, .pill.MALICIOUS, .pill.MALICIOUS_OR_COMPROMISED, .pill.REJECTED, .pill.DENIED, .pill.REVOKED, .pill.DENY, .pill.EXPIRED { border-color: color-mix(in srgb, var(--critical) 70%, transparent); color: var(--danger-text); background: color-mix(in srgb, var(--critical) 14%, transparent); }
 .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .chip { font-family: var(--font-mono); font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2); white-space: nowrap; }
 .chip.SECRET_ACCESS, .chip.CODE_EXECUTION, .chip.INFRASTRUCTURE_CONTROL, .chip.SECRET { border-color: color-mix(in srgb, var(--critical) 50%, transparent); color: var(--danger-text); }
@@ -360,6 +360,11 @@ pre.diff div.hunk { color: var(--info); }
   font-weight: 800; font-size: 15px; color: #fff; background: var(--ink-muted);
 }
 .grade-badge.lg { width: 64px; height: 64px; border-radius: 14px; font-size: 34px; }
+.safety { border: 1px solid var(--border); border-left-width: 4px; border-radius: 8px; padding: 10px 12px; background: var(--surface-2); display: grid; gap: 6px; }
+.safety ul, .safety ol { margin: 4px 0 0; padding-left: 20px; }
+.safety.danger { border-color: color-mix(in srgb, var(--critical) 70%, transparent); background: color-mix(in srgb, var(--critical) 8%, var(--surface-2)); }
+.safety.warn { border-color: color-mix(in srgb, var(--warning) 70%, transparent); }
+.safety.ok { border-color: color-mix(in srgb, var(--good) 60%, transparent); }
 .grade-badge.none { background: transparent; color: var(--ink-muted); border: 1px dashed var(--border); }
 .grade-badge.A { background: var(--good); }
 .grade-badge.B { background: color-mix(in srgb, var(--good) 70%, var(--warning)); }

@@ -6,7 +6,6 @@
     mcp-sentinel install-claude-code         add Sentinel to Claude Code (`claude mcp add-json`)
     mcp-sentinel import-claude [--from code] move existing Claude Desktop / Claude Code servers behind Sentinel
     mcp-sentinel claude-config               print the client configuration without changing anything
-    mcp-sentinel scan <url | -- command …>   vulnerability-scan any MCP server (no registration needed)
     mcp-sentinel token / init                demo token / initialise the database
 """
 
@@ -91,36 +90,6 @@ def _post_import(api_url: str, token: str | None, entries: dict[str, Any], sandb
     return results
 
 
-def _run_scan(args: argparse.Namespace) -> int:
-    from integrity.vulnscan import scan_config
-
-    target = list(args.target or [])
-    if not target:
-        raise SystemExit("usage: mcp-sentinel scan <https://server/mcp> | mcp-sentinel scan -- <command> [args…]")
-    headers = dict(h.split(":", 1) for h in (args.header or []) if ":" in h)
-    headers = {k.strip(): v.strip() for k, v in headers.items()}
-    if args.bearer:
-        headers["Authorization"] = f"Bearer {args.bearer}"
-    if target[0].startswith(("http://", "https://")):
-        transport, config = args.transport or "http", {"url": target[0], "headers": headers}
-    else:
-        env = dict(e.split("=", 1) for e in (args.env or []) if "=" in e)
-        transport, config = "stdio", {"command": target[0], "args": target[1:], "env": env}
-    report = scan_config(config, transport, name=args.name or target[0], active=args.active, timeout=args.timeout)
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    written = []
-    for fmt in args.report:
-        path = out_dir / f"mcp-scan-{stamp}.{fmt}"
-        path.write_text(report.to_html() if fmt == "html" else json.dumps(report.as_dict(), indent=2), encoding="utf-8")
-        written.append(path)
-    print(report.to_text())
-    for path in written:
-        print(f"[+] report saved to {path}")
-    return 2 if report.summary["critical_count"] or report.summary["high_count"] else 0
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(prog="mcp-sentinel", description="MCP-Sentinel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -133,18 +102,6 @@ def main() -> None:
     serve.add_argument("--host", default=None)
     serve.add_argument("--port", type=int, default=None)
     sub.add_parser("bridge", help="run the stdio MCP bridge (Claude Desktop / Claude Code)")
-
-    scan = sub.add_parser("scan", help="vulnerability-scan an MCP server (SecureMCP-style report)")
-    scan.add_argument("target", nargs="*", help="server URL, or `-- command args…` for a local stdio server")
-    scan.add_argument("--transport", choices=["http", "sse"], default=None)
-    scan.add_argument("--header", action="append", help="extra HTTP header 'Name: value' (repeatable)")
-    scan.add_argument("--bearer", default=None, help="bearer token for the server")
-    scan.add_argument("--env", action="append", help="environment variable KEY=value for a stdio server (repeatable)")
-    scan.add_argument("--active", action="store_true", help="also run active probes against read-only tools")
-    scan.add_argument("--report", action="append", choices=["html", "json"], default=None, help="write a report (repeatable)")
-    scan.add_argument("--out", default="reports", help="directory for reports (default: ./reports)")
-    scan.add_argument("--name", default=None)
-    scan.add_argument("--timeout", type=float, default=60.0)
 
     for name in ("claude-config", "install-claude", "install-claude-code", "import-claude"):
         p = sub.add_parser(name)
@@ -187,9 +144,6 @@ def main() -> None:
         from sentinel.bridge import main as bridge_main
 
         raise SystemExit(bridge_main())
-    if args.cmd == "scan":
-        args.report = args.report or []
-        raise SystemExit(_run_scan(args))
 
     api_url = (args.api or settings.api_base_url).rstrip("/")
     entry = clientconfig.sentinel_bridge_entry(

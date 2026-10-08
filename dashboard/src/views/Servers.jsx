@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, usePoll } from "../api.js";
 import { Card, Chips, Drawer, Empty, ErrorNote, Findings, Json, Modal, Pill, Tabs } from "../components/ui.jsx";
 import { routeTo, timeAgo } from "../format.js";
-import { GradeBadge } from "./Scanner.jsx";
+import { GradeBadge, SafetyVerdict } from "./Scanner.jsx";
 
 // Official reference servers, pinned (an unpinned `npx -y pkg` can change code on any launch).
 const PRESETS = [
@@ -68,6 +68,7 @@ function AddServerModal({ onClose, onDone, toast }) {
           <Pill value={result.trust_status} />
           <Pill value={result.risk_state} />
         </div>
+        <SafetyVerdict safety={result.safety} />
         {result.sandbox && (
           <Card title="Honeypot sandbox" subtitle="Launched with a decoy home directory, canary credentials and a recording egress proxy">
             <div className="row gap"><Pill value={result.sandbox.classification} /> <span className="muted small">{result.sandbox.evidence?.duration_s}s</span></div>
@@ -254,6 +255,7 @@ function ServerDetail({ serverId, onClose, toast, isAdmin }) {
       </div>
       <p className="mono small muted">{s.endpoint}</p>
       {s.last_error && <ErrorNote error={s.last_error} />}
+      <SafetyVerdict safety={s.safety} />
       {isAdmin && (
         <div className="row gap wrap">
           <select className="input input-sm" value={s.trust_status} onChange={(e) => act("Trust change", () => api.put(`/v1/servers/${serverId}/trust`, { trust_status: e.target.value, reason: "dashboard" }))}>

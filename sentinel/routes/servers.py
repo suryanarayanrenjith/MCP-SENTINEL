@@ -19,6 +19,8 @@ from sentinel.db import LeaseRow, ServerRow, ToolChangeRow, ToolRow
 from sentinel.deps import admin_identity, db_session, reader
 from sentinel.leases import CapabilityLeaseManager
 from sentinel.receipts import AuditStore
+from sentinel.safety import assess as safety_assess
+from sentinel.safety import blocking_reasons
 from sentinel.secrets_box import decrypt_json, encrypt_json, mask_mapping
 from sentinel.types import TrustStatus, utcnow, worse_trust
 from sentinel.upstream import get_manager
@@ -110,6 +112,7 @@ def server_view(row: ServerRow, session: Session, *, detail: bool = False) -> di
         "description": meta.get("description", ""),
         "sandbox_classification": (meta.get("sandbox_report") or {}).get("classification"),
         "vuln_scan": meta.get("vuln_scan"),
+        "safety": meta.get("safety"),
         "auth_scheme": meta.get("auth_scheme", "none"),
         "auth_audience": meta.get("auth_audience", ""),
         "auth_scopes": meta.get("auth_scopes", []),
@@ -246,7 +249,8 @@ def register(session: Session, settings: Settings, body: RegisterServerBody, reg
         from sentinel.routes.scans import run_server_scan, scan_view
 
         try:
-            scan = scan_view(run_server_scan(session, row, active=False, by=registered_by, settings=settings))
+            scan_row = run_server_scan(session, row, active=False, by=registered_by, settings=settings)
+            scan = {**scan_view(scan_row), "vulnerabilities": scan_row.report.get("vulnerabilities", [])}
         except Exception as exc:  # a scan problem never blocks registration
             scan = {"error": str(exc)[:300]}
     return {
@@ -262,6 +266,7 @@ def register(session: Session, settings: Settings, body: RegisterServerBody, reg
         "sandbox": sandbox,
         "discovery": discovery,
         "scan": scan,
+        "safety": (row.metadata_json or {}).get("safety") or safety_assess(scan=None, findings=row.findings or [], honeypot=sandbox),
         "message": f"Server '{row.server_name}' registered" + (" and connected." if discovery and not discovery.get("error") else "."),
     }
 
@@ -491,6 +496,11 @@ def update_server_trust(
         raise HTTPException(400, f"Invalid trust status. Must be one of: {sorted(valid)}")
     previous = row.trust_status
     row.trust_status = body.trust_status
+    meta = dict(row.metadata_json or {})
+    if body.trust_status in {TrustStatus.TRUSTED.value, TrustStatus.MONITORED.value} and (meta.get("safety") or {}).get("verdict") == "UNSAFE":
+        meta["safety_accepted"] = blocking_reasons(meta["safety"])  # an admin accepted these risks; re-scans keep it
+        meta["safety_accepted_by"] = identity.subject
+        row.metadata_json = meta
     if body.trust_status in {TrustStatus.QUARANTINED.value, TrustStatus.BLOCKED.value}:
         CapabilityLeaseManager(session, get_settings()).revoke_server(server_id, f"server set to {body.trust_status}")
         if body.trust_status == TrustStatus.BLOCKED.value:

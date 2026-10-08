@@ -22,7 +22,7 @@ Sentinel ships with an **empty registry**: no built-in or demo servers. See **[D
 | | |
 |---|---|
 | **Rug-pull firewall** | Each tool's raw wire definition is pinned on first sight and re-verified on a schedule, on `tools/list_changed`, and just before sensitive calls. Drift is diffed and classified (COSMETIC / BENIGN / SUSPICIOUS / MALICIOUS). **The model only ever receives the pinned definition**, so a changed description never reaches the LLM before review. Tested on real package updates of the official servers. |
-| **Vulnerability scanner** (SecureMCP port) | A Python port of [SecureMCP](https://github.com/makalin/SecureMCP) with its stubs implemented: OAuth / token analysis (JWT `alg`/`exp`/scope/audience, token formats, RFC 9728 / 8414 metadata, PKCE S256), authentication and server-integrity probes (TLS, auth bypass with bogus credentials, Origin / DNS-rebinding, CORS, session ids), and prompt-injection testing of tools, prompts and resources, including opt-in active probes against read-only tools that run **inside the honeypot**. HTML/JSON reports with A–F grades. Every server is scanned when added; `mcp-sentinel scan` works standalone. |
+| **Vulnerability scanner** (SecureMCP port) | A Python port of [SecureMCP](https://github.com/makalin/SecureMCP) with its stubs implemented: OAuth / token analysis (JWT `alg`/`exp`/scope/audience, token formats, RFC 9728 / 8414 metadata, PKCE S256), authentication and server-integrity probes (TLS, auth bypass with bogus credentials, Origin / DNS-rebinding, CORS, session ids), and prompt-injection testing of tools, prompts and resources, including opt-in active probes against read-only tools that run **inside the honeypot**. HTML/JSON reports with A–F grades. Every server is scanned automatically when it is added: the server is always added, but the scan recommends fixes and a severe finding marks it **NOT SAFE** and restricts its sensitive tools. |
 | **Honeypot sandbox** | New local servers can first run in a decoy home full of canary credentials, behind a recording egress proxy, with process-tree monitoring. |
 | **Tool-poisoning scanner** | Hidden `<IMPORTANT>` blocks, instruction overrides, secrecy directives, approval-bypass wording, credential-path references, cross-server shadowing, Unicode-tag / zero-width / bidi / ANSI smuggling, encoded payloads, all checked in descriptions *and* parameter metadata. Tuned on real servers to avoid false positives. |
 | **Content-level taint tracking** | Secrets returned by any tool are redacted for the model and fingerprinted. If those bytes later leave through *any* tool, even URL-, base64- or hex-encoded, the call is hard-blocked. |
@@ -53,13 +53,6 @@ mcp-sentinel import-claude --from code --replace  # from Claude Code (~/.claude.
 ```
 
 Sentinel announces new tools with `tools/list_changed`. Clients that honour it refresh on their own; in Claude Code run `/mcp` to reconnect if needed. Claude Desktop caches its tool list: toggle the connector or restart it. Until then, new tools are usable immediately through `sentinel_discover_tools` / `sentinel_invoke`, which go through the same enforcement.
-
-Scan any server without adding it:
-
-```bash
-mcp-sentinel scan https://example.com/mcp --report html
-mcp-sentinel scan --active -- npx -y @modelcontextprotocol/server-memory@2026.8.31
-```
 
 Tests: `pytest -q`. The suite runs against a real MCP server over stdio and Streamable HTTP.
 
