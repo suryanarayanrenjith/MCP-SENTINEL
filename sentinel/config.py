@@ -68,6 +68,26 @@ class Settings(BaseSettings):
     process_monitor_interval_seconds: float = 5.0
     background_jobs_enabled: bool = True
 
+    # Sandbox pre-flight ("shadow execution") for local stdio servers: every call first runs against a
+    # throw-away copy of the server's files with decoy credentials; the real call only follows a clean run.
+    sandbox_mode: Literal["auto", "docker", "process", "off"] = "auto"  # auto = Docker when available
+    sandbox_preflight: Literal["all", "writes", "off"] = "all"  # which calls are pre-flighted
+    sandbox_audit_on_register: bool = True  # exercise every tool in the sandbox when a server is added
+    sandbox_dir: str = str(Path.home() / ".mcp-sentinel" / "sandbox")
+    sandbox_image: str = "mcp-sentinel/sandbox:1"
+    sandbox_node_image: str = "node:22-slim"
+    sandbox_python_image: str = "python:3.12-slim"
+    sandbox_call_timeout_seconds: float = 25.0
+    sandbox_install_timeout_seconds: float = 300.0
+    sandbox_max_files: int = 5000  # per workspace root
+    sandbox_max_bytes: int = 200 * 1024 * 1024
+    sandbox_max_deletes: int = 25  # blast-radius guard: more deletions than this in one call is blocked
+    sandbox_max_modifications: int = 100
+    sandbox_strict: bool = True  # destructive calls the sandbox could not verify need human approval
+    sandbox_memory: str = "512m"
+    sandbox_cpus: str = "1"
+    undo_retention: int = 200  # undo journals kept (oldest pruned first)
+
     # Data-flow / egress
     internal_domains: str = "internal,local,localhost,lan,corp,home.arpa,svc,cluster.local"
     allowed_egress_domains: str = ""
