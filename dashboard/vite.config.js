@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       "/v1": "http://localhost:8443",
       "/health": "http://localhost:8443",
+      "/mcp": "http://localhost:8443",
     },
   },
 });

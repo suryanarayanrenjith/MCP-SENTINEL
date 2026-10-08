@@ -1,3 +1,4 @@
-from dataflow.guard import DataFlowGuard, DataFlowFinding
+from dataflow.guard import DataFlowFinding, DataFlowGuard
+from dataflow.taint import TaintStore
 
-__all__ = ["DataFlowGuard", "DataFlowFinding"]
+__all__ = ["DataFlowGuard", "DataFlowFinding", "TaintStore"]

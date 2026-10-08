@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
 
 import httpx
 
+from policy.rules import RuleMatch
 from sentinel.config import Settings
+from sentinel.netutil import HostClass, parse_destination
 from sentinel.types import (
     ROLE_DEFAULT_CAPABILITIES,
     SENSITIVE_CAPABILITIES,
@@ -13,6 +15,8 @@ from sentinel.types import (
     IdentityContext,
     TrustStatus,
 )
+
+LAB_DENIED_DESTINATIONS = ("unknown.example", "evil.example")
 
 
 @dataclass
@@ -24,6 +28,8 @@ class PolicyDecision:
     require_mfa: bool = False
     require_lease: bool = False
     capability: Capability | None = None
+    require_approval: bool = False
+    matched_rules: list[str] = field(default_factory=list)
 
 
 class PolicyEngine:
@@ -43,9 +49,15 @@ class PolicyEngine:
         lease_active: bool,
         mfa_for_request: bool,
         opa_input: dict[str, Any] | None = None,
+        capabilities: Iterable[Capability] | None = None,
+        destinations: Iterable[str] = (),
+        rule_matches: list[RuleMatch] | None = None,
+        lockdown: str = "off",
+        review_state: str = "APPROVED",
+        change_classification: str | None = None,
     ) -> PolicyDecision:
         if self.settings.opa_enabled:
-            remote = self._opa(opa_input or {})
+            remote = self._opa({**(opa_input or {}), "capabilities": [c.value for c in (capabilities or [capability])]})
             if remote is not None:
                 return remote
         return self._local(
@@ -53,9 +65,14 @@ class PolicyEngine:
             server_status=server_status,
             tool_status=tool_status,
             capability=capability,
-            destination=destination,
+            capabilities=list(capabilities or [capability]),
+            destinations=[d for d in [destination, *destinations] if d],
             lease_active=lease_active,
             mfa_for_request=mfa_for_request,
+            rule_matches=rule_matches or [],
+            lockdown=lockdown,
+            review_state=review_state,
+            change_classification=change_classification,
         )
 
     def _local(
@@ -65,9 +82,14 @@ class PolicyEngine:
         server_status: str,
         tool_status: str,
         capability: Capability,
-        destination: str | None,
+        capabilities: list[Capability],
+        destinations: list[str],
         lease_active: bool,
         mfa_for_request: bool,
+        rule_matches: list[RuleMatch],
+        lockdown: str,
+        review_state: str,
+        change_classification: str | None,
     ) -> PolicyDecision:
         reasons: list[str] = []
         if not identity.token_valid or not identity.subject:
@@ -75,68 +97,79 @@ class PolicyEngine:
         if not identity.roles:
             return PolicyDecision(False, "deny.no_roles", ["no authorized roles in identity token"], hard_block=True)
         if server_status in {TrustStatus.BLOCKED.value, TrustStatus.QUARANTINED.value}:
-            return PolicyDecision(
-                False,
-                "deny.server_trust",
-                [f"server trust status is {server_status}"],
-                hard_block=True,
-            )
+            return PolicyDecision(False, "deny.server_trust", [f"server trust status is {server_status}"], hard_block=True)
         if tool_status in {TrustStatus.BLOCKED.value, TrustStatus.QUARANTINED.value}:
-            return PolicyDecision(
-                False,
-                "deny.tool_trust",
-                [f"tool trust status is {tool_status}"],
-                hard_block=True,
-            )
-        granted = set()
+            return PolicyDecision(False, "deny.tool_trust", [f"tool trust status is {tool_status}"], hard_block=True)
+        granted: set[Capability] = set()
         for role in identity.roles:
             granted |= ROLE_DEFAULT_CAPABILITIES.get(role, set())
-        if capability not in granted:
+        missing = [c for c in capabilities if c not in granted]
+        if missing:
             return PolicyDecision(
                 False,
                 "deny.unauthorized_capability",
-                [f"roles {identity.roles} do not include {capability.value}"],
+                [f"roles {identity.roles} do not include {', '.join(c.value for c in missing)}"],
                 hard_block=True,
             )
-        if destination and self._forbidden_destination(destination):
+        for dest in destinations:
+            if self._forbidden_destination(dest):
+                return PolicyDecision(False, "deny.forbidden_destination", [f"forbidden destination {dest}"], hard_block=True)
+        sensitive = bool(set(capabilities) & SENSITIVE_CAPABILITIES)
+        if server_status == TrustStatus.RESTRICTED.value and sensitive:
             return PolicyDecision(
-                False,
-                "deny.forbidden_destination",
-                [f"forbidden destination {destination}"],
-                hard_block=True,
+                False, "deny.restricted_server", ["restricted server cannot use sensitive capabilities"], hard_block=True
             )
-        require_lease = capability in SENSITIVE_CAPABILITIES
-        require_mfa = capability in SENSITIVE_CAPABILITIES and not identity.mfa_satisfied
-        if require_lease and not lease_active and mfa_for_request is False and not require_mfa:
-            reasons.append("sensitive capability requires an active lease")
+        if tool_status == TrustStatus.RESTRICTED.value and sensitive:
             return PolicyDecision(
-                False,
-                "deny.lease_required",
-                reasons,
-                require_lease=True,
-                capability=capability,
+                False, "deny.restricted_tool", ["restricted tool cannot use sensitive capabilities until re-approved"], hard_block=True
             )
-        if server_status == TrustStatus.RESTRICTED.value and capability in SENSITIVE_CAPABILITIES:
-            return PolicyDecision(
-                False,
-                "deny.restricted_server",
-                ["restricted server cannot use sensitive capabilities"],
-                hard_block=True,
-            )
+        deny = [m for m in rule_matches if m.effect == "DENY"]
+        if deny:
+            return PolicyDecision(False, f"deny.rule.{deny[0].rule_id}", [f"policy rule '{deny[0].name}': {deny[0].reason}"],
+                                  hard_block=True, matched_rules=[m.rule_id for m in rule_matches])
+        if lockdown == "deny_all":
+            return PolicyDecision(False, "deny.lockdown", ["Sentinel is in LOCKDOWN: all tool calls are denied"], hard_block=True)
+
+        require_lease = sensitive
+        require_mfa = sensitive and not identity.mfa_satisfied
+        require_approval = False
+        policy_id = "allow.default"
+        if any(m.effect == "REQUIRE_MFA" for m in rule_matches):
+            require_mfa = True
+            require_lease = True
+            reasons.append("policy rule requires step-up MFA")
+        if any(m.effect == "REQUIRE_APPROVAL" for m in rule_matches):
+            require_approval = True
+            reasons.append("policy rule requires human approval")
+        impactful = bool(set(capabilities) - {Capability.READ, Capability.EXTERNAL_LOOKUP})
+        if lockdown == "approve_writes" and impactful:
+            require_approval = True
+            reasons.append("lockdown mode: state-changing calls need human approval")
+        if review_state == "CHANGED" and change_classification in {"SUSPICIOUS", "MALICIOUS"} and impactful:
+            require_approval = True
+            reasons.append("tool definition changed after approval: a human must approve state-changing use")
+        if require_approval:
+            policy_id = "allow.with_approval"
+        elif require_mfa:
+            policy_id = "allow.with_stepup"
         reasons.append("identity, role, server, tool, and capability checks passed")
         return PolicyDecision(
             True,
-            "allow.default",
+            policy_id,
             reasons,
             require_mfa=require_mfa,
             require_lease=require_lease,
             capability=capability,
+            require_approval=require_approval,
+            matched_rules=[m.rule_id for m in rule_matches],
         )
 
     def _forbidden_destination(self, destination: str) -> bool:
         dest = destination.lower()
-        blocked = ("unknown.example", "evil.example", "169.254.169.254", "metadata.google.internal")
-        return any(b in dest for b in blocked)
+        if any(b in dest for b in LAB_DENIED_DESTINATIONS):
+            return True
+        parsed = parse_destination(destination, self.settings.internal_domain_list)
+        return parsed is not None and parsed.host_class == HostClass.METADATA
 
     def _opa(self, payload: dict[str, Any]) -> PolicyDecision | None:
         try:
@@ -147,6 +180,8 @@ class PolicyEngine:
             )
             resp.raise_for_status()
             result = (resp.json() or {}).get("result") or {}
+            if not result:
+                return None
             return PolicyDecision(
                 allow=bool(result.get("allow")),
                 policy_id=str(result.get("policy_id") or "opa.sentinel.authz"),

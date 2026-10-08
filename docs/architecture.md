@@ -1,53 +1,78 @@
 # MCP-Sentinel architecture
 
-MCP-Sentinel is a **Policy Enforcement Point (PEP)** sitting between an MCP client/agent and MCP servers. The **Policy Engine** is the **Policy Decision Point (PDP)**. The LLM may propose tool calls; it cannot authorize them.
+MCP-Sentinel is a **policy enforcement point (PEP)** that sits between MCP clients and MCP servers. It is also an MCP server to the client and an MCP client to every upstream server. The policy engine is the **policy decision point (PDP)**. The LLM can propose tool calls but cannot authorise them.
 
 ```
-User → LLM/Agent → MCP Client → MCP-Sentinel (PEP) → MCP Server(s) → Tools → Resources
-                                      ↑
-                               Policy Engine (PDP)
-                               Identity / OIDC
-                               Registries / Risk / MFA / Data-flow
+Claude Desktop ──stdio──► sentinel.bridge ──HTTP──┐
+Claude Code / any client ──Streamable HTTP /mcp──►│  MCP-Sentinel control plane (FastAPI)
+Dashboard (React) ──REST /v1──────────────────────►│
+                                                   │  frontend → gateway → pipeline (PDP) → upstream manager
+                                                   └──► stdio servers (npx/uvx/docker/python), Streamable HTTP, legacy SSE
 ```
 
-## Zero-trust loop
+## Request path of one `tools/call`
 
-Every `tools/call` is evaluated independently:
+1. **Frontend** (`sentinel/mcp_frontend.py`). It resolves the exposed name `slug__tool` to `(server_id, tool)`. It also serves the meta-tools and holds the call open during step-up, using progress notifications plus an `open_url` or URL-mode elicitation.
+2. **Gateway** (`sentinel/gateway.py`). Before running a sensitive or non-trusted tool, it **re-lists the upstream server just in time** (at most every 3 s). For other tools it does this when the listing is older than `SENTINEL_JIT_INTEGRITY_SECONDS`. A rug pull is therefore caught *before* the call runs, not on the next poll.
+3. **Pipeline** (`sentinel/pipeline.py`, `ControlPlane.authorize`) runs a gated cascade. Every gate is recorded in the receipt:
 
-1. Verify user and agent identity (OIDC/JWT). Roles are taken from the IdP token, never from the MCP body.
-2. Look up server and tool in local trust/integrity registries (public registry evidence is optional and locally overridable).
-3. Cryptographic, structural, semantic, and behavioral integrity checks.
-4. Schema/input validation (SSRF, path traversal, command injection).
-5. RBAC **and** capability authorization **and** contextual workflow policy **and** risk.
-6. Sequential capability-transition analysis.
-7. Data-flow classification and exfiltration rules.
-8. Runtime/sandbox evidence.
-9. Explainable risk score (0–100) that **cannot** override hard denies.
-10. Adaptive response: ALLOW / MONITOR / RESTRICT / MFA / QUARANTINE / BLOCK.
-11. Temporary capability leases after step-up, bound to workflow and TTL.
-12. Proxy only if ALLOW or MONITOR, then treat tool **output as untrusted**.
-13. Persist a decision receipt answering who/what/why.
+   | Gate | Hard-fails on |
+   |---|---|
+   | identity | missing/expired/invalid token; roles come only from the IdP token |
+   | agent | the agent id in the request disagrees with the token's agent claim |
+   | server | unknown, disabled, QUARANTINED or BLOCKED server |
+   | tool | unknown, REJECTED, QUARANTINED or BLOCKED tool, or a tool removed upstream |
+   | semantic_change | (warn) the live definition differs from the pinned one, or the tool is pending review |
+   | input | path traversal, credential paths, shell chaining, dangerous commands, metadata SSRF, dangerous URL schemes |
+   | policy | RBAC × capability, admin DENY rules, lockdown, restricted server running a sensitive tool, forbidden destinations |
+   | dataflow | content taint (secret bytes leaving), SECRET/CRITICAL data to an external sink |
+   | runtime | critical runtime deviation (lab/demo telemetry, or process-monitor findings) |
+   | risk | score ≥ block threshold |
 
-## Trust is never permanent
+   Gates that pass contribute **evidence** to the risk engine instead: the trust prior, schema drift, soft input findings, sequence transitions, context mismatch, the lethal trifecta, prompt-injection in arguments, velocity, behavioural drift and workflow risk memory. See [risk-engine.md](risk-engine.md).
+4. **Obligations**. MFA step-up (RFC 6238 TOTP, the IdP ACR/AMR claims, or demo confirmation) and/or human approval (single-use and bound to a request hash). When either is satisfied, a **capability lease** is granted. Each lease is bound to the workflow, subject, server, tool and capability, and for CRITICAL tools to the exact arguments (`scope_hash`).
+5. **Execution** (`sentinel/upstream/manager.py`). The manager runs the call on a persistent upstream session. It snapshots the server's process tree before and after the call to record new children and new remote hosts.
+6. **Output firewall** (`Gateway._guard_output`). It strips invisible/ANSI characters and redacts secrets with DLP (unless SECRET_ACCESS was authorised and the decision is not RESTRICT). Prompt injections are spotlighted or quarantined. The behavioural baseline is updated, secret fingerprints are added to the workflow's taint store, and the output is **withheld** if the tool misbehaved during the call.
+7. **Receipt** (`sentinel/receipts.py`). The receipt is appended to a SHA-256 hash chain and signed with Ed25519. It records the gate trace, the risk factors, likelihood × impact, and the obligations.
 
-`TRUSTED` means “currently acceptable,” not “forever safe.” Integrity changes, runtime anomalies, or policy events move servers/tools to MONITORED, RESTRICTED, QUARANTINED, or BLOCKED.
+## Tool catalogue and integrity
+
+* **Discovery** (`integrity/discovery.py`) lists every server periodically (`SENTINEL_DISCOVERY_INTERVAL_SECONDS`), on `notifications/tools/list_changed`, before sensitive calls, and on demand. It then reconciles the result against the pins. See [rug-pull-detection.md](rug-pull-detection.md).
+* **Served definition** (`integrity/registry.served_definition`). Claude receives the **pinned** definition, or a sanitised live one for tools that have not been approved yet. A Sentinel note is prepended to the description. Tools that are REJECTED, QUARANTINED, BLOCKED, removed or on a disabled server are not exposed at all.
+* **Capability inference** (`integrity/capabilities.py`). Capabilities, sensitivity and toxic-flow roles are inferred from the name (the first verb decides), the parameters and the description. Annotations are treated as **untrusted hints**: they can raise risk but never lower it, and contradictions count as evidence.
+* **Toxic flows** (`integrity/toxicflow.py`). This analysis works across the whole toolset. It looks for paths from a private source through an untrusted source to an egress sink, flags injection-to-RCE paths, and computes the minimal set of servers to cut.
+
+## Processes and state
+
+| Component | Where |
+|---|---|
+| API + dashboard | `mcp-sentinel serve` (uvicorn; serves `dashboard/dist` at `/` when built) |
+| stdio bridge | `python -m sentinel.bridge`, launched by Claude Desktop. It holds no secrets and mints a loopback-only demo token, or uses `SENTINEL_TOKEN` |
+| Upstream sessions | inside the API process; stdio children run in their own process group/session with a minimal environment |
+| Background jobs | discovery loop and process-monitor loop (`SENTINEL_BACKGROUND_JOBS_ENABLED`) |
+| Database | SQLite (WAL) by default, PostgreSQL via `SENTINEL_DATABASE_URL`. New columns are added automatically to existing databases |
+| Hot state | in-memory or Redis (`SENTINEL_REDIS_URL`): workflow extras, taint fingerprints, risk memory, MFA challenges |
+| Keys | `keys/secrets.key` (Fernet, encrypts upstream configs and TOTP secrets) and `keys/receipts.key` (Ed25519), created with mode 0600 |
 
 ## Modules
 
 | Path | Role |
 |---|---|
-| `sentinel/` | Gateway PEP, pipeline, leases, receipts, demo CLI |
+| `sentinel/` | app, pipeline, gateway, MCP frontend/bridge, receipts, DLP, netutil, CLI, demo |
+| `sentinel/upstream/` | MCP client (stdio, Streamable HTTP, legacy SSE) and connection manager |
+| `sentinel/routes/` | REST API (core, gateway, servers, tools, approvals, audit, policy) |
 | `identity/` | OIDC/JWT verification, demo tokens, Keycloak realm |
-| `policy/` | PDP (Python + optional OPA/Rego) |
-| `integrity/` | SHA-256, structural, semantic firewall, registries |
-| `workflow/` | Contextual engine + sequential analyzer |
-| `dataflow/` | Data classification and exfiltration guard |
-| `risk/` | Deterministic explainable scoring |
-| `mfa/` | Step-up challenges (IdP ACR/AMR) |
-| `monitoring/` | Behavioral baselines vs observed runtime |
-| `sandbox/` | Isolated probe (synthetic resources; optional Docker) |
-| `mcp_servers/` | Lab SOC MCP tools |
-| `dashboard/` | Visualization / investigation / MFA completion UI |
-| `tests/` | Automated security tests |
+| `policy/` | Python PDP, admin rules, OPA/Rego bundle |
+| `integrity/` | registry, discovery, scanner, rug-pull diff, capability inference, supply chain, toxic flows |
+| `risk/` | evidence-fusion engine and workflow risk memory |
+| `workflow/` | sequential analyser and context/intent engine |
+| `dataflow/` | data classification, exfiltration guard, content taint |
+| `mfa/` | TOTP, enrolment, step-up challenges |
+| `monitoring/` | process monitor and statistical behavioural baselines |
+| `sandbox/` | honeypot sandbox and the legacy expected-vs-observed probe |
+| `mcp_servers/` | lab SOC MCP server (Streamable HTTP + stdio) with a rug-pull switch |
+| `dashboard/` | React UI (it never makes security decisions) |
 
-The dashboard is **not** a security authority.
+## Trust is never permanent
+
+TRUSTED means "acceptable right now". Integrity drift, runtime anomalies, honeypot findings and policy events move servers and tools to MONITORED, RESTRICTED, QUARANTINED or BLOCKED. Only an administrator moves them back up.

@@ -12,6 +12,8 @@ def configure_logging(level: str = "INFO") -> None:
         stream=sys.stdout,
         level=getattr(logging, level.upper(), logging.INFO),
     )
+    for noisy in ("httpx", "httpcore", "uvicorn.access"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

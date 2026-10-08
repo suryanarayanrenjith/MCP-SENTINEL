@@ -1,43 +1,84 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
 const API = import.meta.env.VITE_API_URL || "";
+let currentToken = "";
 
-async function readResponse(res, path) {
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail || `${path} ${res.status}`);
-  return body;
+export function setApiToken(token) {
+  currentToken = token || "";
 }
 
-export async function getJson(path, token) {
+function formatDetail(detail) {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) return detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+  return JSON.stringify(detail);
+}
+
+async function request(method, path, body, opts = {}) {
+  const headers = { Accept: "application/json" };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const token = opts.token !== undefined ? opts.token : currentToken;
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  return readResponse(res, path);
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { detail: text };
+  }
+  if (!res.ok) {
+    const err = new Error(formatDetail(data && data.detail) || `${res.status} ${path}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
 }
 
-export async function postJson(path, body, token) {
-  const res = await fetch(`${API}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-  return readResponse(res, path);
+export const api = {
+  get: (path, opts) => request("GET", path, undefined, opts),
+  post: (path, body, opts) => request("POST", path, body === undefined ? {} : body, opts),
+  put: (path, body, opts) => request("PUT", path, body, opts),
+  patch: (path, body, opts) => request("PATCH", path, body, opts),
+  del: (path, body, opts) => request("DELETE", path, body, opts),
+};
+
+export async function mintDemoToken(subject, role) {
+  const q = new URLSearchParams({ subject, role, agent_id: "sentinel-dashboard" });
+  return request("POST", `/v1/demo/token?${q.toString()}`, undefined, { token: "" });
 }
 
-export async function putJson(path, body, token) {
-  const res = await fetch(`${API}${path}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-  return readResponse(res, path);
+/** Fetch on mount / when deps change, optionally re-poll every `interval` ms. */
+export function usePoll(fn, deps = [], interval = 0) {
+  const [state, setState] = useState({ data: null, error: null, loading: true });
+  const fnRef = useRef(fn);
+  fnRef.current = fn;
+  const reload = useCallback(async () => {
+    try {
+      const data = await fnRef.current();
+      setState({ data, error: null, loading: false });
+    } catch (e) {
+      setState((s) => ({ ...s, error: e.message || String(e), loading: false }));
+    }
+  }, []);
+  useEffect(() => {
+    reload();
+    if (!interval) return undefined;
+    const id = setInterval(reload, interval);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...deps, interval]);
+  return { ...state, reload };
 }
 
-export async function getDemoAdminToken() {
-  const res = await fetch(`${API}/v1/demo/token?role=SECURITY_ADMIN&subject=dashboard-admin`, { method: "POST" });
-  return readResponse(res, "/v1/demo/token");
+export function safeStorage() {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
 }
