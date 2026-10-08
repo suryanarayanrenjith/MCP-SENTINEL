@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: sentinel
       POSTGRES_DB: sentinel
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - sentinel-pg:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
 
   opa:
     image: openpolicyagent/opa:0.70.0
@@ -26,7 +26,7 @@ services:
     volumes:
       - ./policy/rego:/policies:ro
     ports:
-      - "8181:8181"
+      - "127.0.0.1:8181:8181"
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.0.7
@@ -35,7 +35,7 @@ services:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./identity/keycloak:/opt/keycloak/data/import:ro
 
@@ -46,7 +46,7 @@ services:
     environment:
       SOC_SERVER_COMPROMISED: "false"
     ports:
-      - "9001:9001"
+      - "127.0.0.1:9001:9001"
 
   sentinel:
     build:
@@ -70,17 +70,28 @@ services:
       SENTINEL_DEMO_JWT_SECRET: change-me-demo-only-not-for-production
       SENTINEL_CORS_ORIGINS: http://localhost:5173,http://localhost:3000
       SENTINEL_SOC_ENDPOINT: http://soc-mcp:9001/mcp
+      SENTINEL_GATEWAY_HOST: 0.0.0.0
+      SENTINEL_PUBLIC_URL: http://localhost:8443
+      SENTINEL_DASHBOARD_URL: http://localhost:3000
+      SENTINEL_ALLOWED_HOSTS: localhost,127.0.0.1,sentinel,host.docker.internal
+      # requests arrive from the dashboard's nginx container, not loopback; ports are bound to 127.0.0.1 below
+      SENTINEL_DEMO_TOKEN_LOOPBACK_ONLY: "false"
+      SENTINEL_SECRETS_KEY_FILE: /data/keys/sentinel.key
+      SENTINEL_RECEIPT_KEY_FILE: /data/keys/receipt_ed25519.pem
+    volumes:
+      - sentinel-keys:/data/keys
     ports:
-      - "8443:8443"
+      - "127.0.0.1:8443:8443"
 
   dashboard:
     build:
       context: .
       dockerfile: docker/dashboard.Dockerfile
     ports:
-      - "3000:80"
+      - "127.0.0.1:3000:80"
     depends_on:
       - sentinel
 
 volumes:
   sentinel-pg:
+  sentinel-keys:

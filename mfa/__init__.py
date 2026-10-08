@@ -1,3 +1,3 @@
-from mfa.stepup import StepUpManager
+from mfa.stepup import MfaChallenge, StepUpManager
 
-__all__ = ["StepUpManager"]
+__all__ = ["StepUpManager", "MfaChallenge"]

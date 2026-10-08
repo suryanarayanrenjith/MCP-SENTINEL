@@ -18,4 +18,7 @@ htmlcov/
 *.log
 docker/postgres-data/
 keys/*.pem
+keys/*.key
+*.db-wal
+*.db-shm
 !keys/.gitkeep

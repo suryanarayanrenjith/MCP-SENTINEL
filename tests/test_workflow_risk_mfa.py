@@ -5,7 +5,6 @@ from sentinel.catalog import SOC_SERVER_ID
 from sentinel.config import get_settings
 from sentinel.db import get_session_factory
 from sentinel.leases import CapabilityLeaseManager
-from sentinel.types import Capability
 
 
 def _headers(role: str, mfa: bool = False) -> dict[str, str]:

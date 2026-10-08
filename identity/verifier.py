@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -17,6 +18,21 @@ class IdentityError(Exception):
         self.message = message
 
 
+_jwks_lock = threading.Lock()
+_jwks_clients: dict[str, PyJWKClient] = {}
+
+
+def _jwks_client(url: str) -> PyJWKClient:
+    # PyJWKClient caches signing keys per instance; share one per JWKS URL so the IdP is not
+    # queried on every tool call.
+    with _jwks_lock:
+        client = _jwks_clients.get(url)
+        if client is None:
+            client = PyJWKClient(url, cache_keys=True, lifespan=300)
+            _jwks_clients[url] = client
+        return client
+
+
 class IdentityVerifier:
     """OIDC/JWT identity verifier. Roles come from the IdP token, never from MCP request body."""
 
@@ -24,7 +40,7 @@ class IdentityVerifier:
         self.settings = settings
         self._jwks: PyJWKClient | None = None
         if settings.auth_mode == "oidc" and settings.oidc_jwks_url:
-            self._jwks = PyJWKClient(settings.oidc_jwks_url)
+            self._jwks = _jwks_client(settings.oidc_jwks_url)
 
     def verify(self, authorization: str | None, *, agent_hint: str | None = None) -> IdentityContext:
         if not authorization or not authorization.lower().startswith("bearer "):
@@ -40,6 +56,10 @@ class IdentityVerifier:
             raise IdentityError("wrong_audience", "Token audience is not mcp-sentinel") from exc
         except jwt.InvalidTokenError as exc:
             raise IdentityError("invalid_token", str(exc)) from exc
+        except jwt.PyJWTError as exc:  # e.g. PyJWKClientError when the IdP's JWKS is unreachable
+            raise IdentityError("jwks_unavailable", f"could not obtain signing keys: {exc}") from exc
+        if not str(claims.get("sub") or "").strip():
+            raise IdentityError("invalid_token", "token has an empty subject")
 
         roles = self._extract_roles(claims)
         allowed_roles = set(self.settings.role_list)

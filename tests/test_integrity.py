@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from integrity.crypto import canonical_hash
 from integrity.firewall import SemanticChangeFirewall
-from sentinel.types import Capability, Sensitivity
 
 
 def test_unchanged_tool():

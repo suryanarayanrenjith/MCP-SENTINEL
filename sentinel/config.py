@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _csv(value: str) -> list[str]:
+    return [v.strip() for v in (value or "").split(",") if v.strip()]
 
 
 class Settings(BaseSettings):
@@ -25,49 +31,120 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     opa_url: str = "http://localhost:8181"
     opa_enabled: bool = False
-    gateway_host: str = "0.0.0.0"
+    # Local-first: bind to loopback by default (MCP Streamable HTTP guidance / DNS-rebinding defence).
+    gateway_host: str = "127.0.0.1"
     gateway_port: int = 8443
-    cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://localhost:8443,http://127.0.0.1:8443"
+    # Host-header allowlist (DNS-rebinding defence). "*" disables the check.
+    allowed_hosts: str = "localhost,127.0.0.1,::1,[::1],sentinel,host.docker.internal,testserver"
     tls_enabled: bool = False
+    public_url: str = ""  # externally reachable base URL of the API, used in approval links
+    dashboard_url: str = ""  # defaults to public_url when the built dashboard is served by the API
+    static_dashboard_dir: str = str(REPO_ROOT / "dashboard" / "dist")
+
     lease_default_seconds: int = 120
     workflow_ttl_seconds: int = 1800
+    mfa_ttl_seconds: int = 300
+    approval_ttl_seconds: int = 600
     mfa_acr: str = "http://schemas.openid.net/pape/policies/2007/06/multi-factor"
     hard_block_on_quarantine: bool = True
+    allow_self_approval: bool | None = None  # None => allowed only in demo mode
+    demo_token_loopback_only: bool = True
+
+    # Risk thresholds (0-100). Hard policy always overrides these.
     max_risk_allow: int = 39
+    restrict_risk_threshold: int = 40
     mfa_risk_threshold: int = 60
     block_risk_threshold: int = 80
+    risk_alpha: float = 0.5  # share of the risk carried by likelihood alone (rest is modulated by impact)
+    risk_memory_half_life_seconds: int = 600
+    velocity_calls_per_minute: int = 30
+
+    # Upstream MCP servers
+    allow_stdio_servers: bool = True
+    upstream_timeout_seconds: float = 45.0
+    upstream_connect_timeout_seconds: float = 90.0
+    discovery_interval_seconds: int = 60
+    jit_integrity_seconds: int = 15
+    auto_pin_clean_tools: bool = True
+    process_monitor_enabled: bool = True
+    process_monitor_interval_seconds: float = 5.0
+    background_jobs_enabled: bool = True
+
+    # Data-flow / egress
+    internal_domains: str = "internal,local,localhost,lan,corp,home.arpa,svc,cluster.local"
+    allowed_egress_domains: str = ""
+    dlp_redact_outputs: bool = True
+    trust_client_telemetry: bool = False  # demo mode accepts client-supplied runtime telemetry for lab scenarios
+
+    # MCP front-end (Claude Desktop bridge / Streamable HTTP endpoint)
+    approval_wait_seconds: int = 50
+    expose_meta_tools: bool = True
+    result_banner: bool = True
+
+    secrets_key_file: str = str(REPO_ROOT / "keys" / "sentinel.key")
+    receipt_key_file: str = str(REPO_ROOT / "keys" / "receipt_ed25519.pem")
+
     sandbox_enabled: bool = False
     sandbox_image: str = "mcp-sentinel-sandbox:dev"
     public_registry_url: str = ""
     public_registry_override_local: bool = True
     roles: str = "USER,DEVELOPER,SOC_ANALYST,SECURITY_ADMIN,SYSTEM_ADMIN"
 
-    # Risk weights (configurable, must not override hard policies)
-    weight_identity: int = 8
-    weight_authorization: int = 10
-    weight_server_trust: int = 10
-    weight_tool_integrity: int = 12
-    weight_semantic_change: int = 10
-    weight_workflow: int = 12
-    weight_capability: int = 14
-    weight_dataflow: int = 16
-    weight_input: int = 8
-    weight_output: int = 8
-    weight_runtime: int = 14
-    weight_sandbox: int = 8
-    weight_authn_assurance: int = 6
-
     @property
     def cors_origin_list(self) -> list[str]:
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        return _csv(self.cors_origins)
+
+    @property
+    def allowed_host_list(self) -> list[str]:
+        return _csv(self.allowed_hosts)
 
     @property
     def jwt_algorithm_list(self) -> list[str]:
-        return [a.strip() for a in self.jwt_algorithms.split(",") if a.strip()]
+        algs = _csv(self.jwt_algorithms)
+        if self.auth_mode == "demo":
+            # Demo tokens are HMAC-signed with the shared demo secret; nothing else is acceptable.
+            return ["HS256"]
+        # Never accept symmetric algorithms against an OIDC JWKS (algorithm-confusion defence).
+        return [a for a in algs if not a.upper().startswith("HS")] or ["RS256"]
 
     @property
     def role_list(self) -> list[str]:
-        return [r.strip() for r in self.roles.split(",") if r.strip()]
+        return _csv(self.roles)
+
+    @property
+    def internal_domain_list(self) -> list[str]:
+        return [d.lower().lstrip(".") for d in _csv(self.internal_domains)]
+
+    @property
+    def allowed_egress_domain_list(self) -> list[str]:
+        return [d.lower().lstrip(".") for d in _csv(self.allowed_egress_domains)]
+
+    @property
+    def self_approval_allowed(self) -> bool:
+        if self.allow_self_approval is None:
+            return self.auth_mode == "demo"
+        return self.allow_self_approval
+
+    @property
+    def accepts_client_telemetry(self) -> bool:
+        return self.trust_client_telemetry or self.auth_mode == "demo"
+
+    @property
+    def api_base_url(self) -> str:
+        if self.public_url:
+            return self.public_url.rstrip("/")
+        host = self.gateway_host if self.gateway_host not in {"0.0.0.0", "::"} else "localhost"
+        scheme = "https" if self.tls_enabled else "http"
+        return f"{scheme}://{host}:{self.gateway_port}"
+
+    @property
+    def dashboard_base_url(self) -> str:
+        if self.dashboard_url:
+            return self.dashboard_url.rstrip("/")
+        if Path(self.static_dashboard_dir).joinpath("index.html").exists():
+            return self.api_base_url
+        return "http://localhost:5173"
 
 
 @lru_cache

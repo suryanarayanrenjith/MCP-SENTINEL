@@ -54,7 +54,9 @@ class StateStore:
             try:
                 import redis
 
-                client = redis.Redis.from_url(redis_url, decode_responses=True)
+                client = redis.Redis.from_url(
+                    redis_url, decode_responses=True, socket_connect_timeout=1.0, socket_timeout=2.0
+                )
                 client.ping()
                 self._redis = client
             except Exception:
@@ -86,3 +88,7 @@ class StateStore:
         if self._redis is not None:
             return [k for k in self._redis.scan_iter(f"{prefix}*")]
         return self._memory.keys(prefix)
+
+    @property
+    def backend(self) -> str:
+        return "redis" if self._redis is not None else "memory"

@@ -1,3 +1,4 @@
-from risk.engine import RiskEngine
+from risk.engine import Evidence, RiskEngine, band_for
+from risk.memory import RiskMemory
 
-__all__ = ["RiskEngine"]
+__all__ = ["RiskEngine", "Evidence", "RiskMemory", "band_for"]

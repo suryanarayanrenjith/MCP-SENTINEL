@@ -1,143 +1,126 @@
-# Connecting LLM clients to MCP-Sentinel
+# Connecting Claude Desktop and other clients
 
-MCP-Sentinel currently has a FastAPI REST control plane and a React dashboard. It is not itself a complete MCP stdio or Streamable HTTP server, and the dashboard is not an LLM client. To use it with an LLM, route the model's tool calls through an application backend or a small MCP adapter that calls Sentinel's REST gateway. Keep identity tokens and server credentials in that trusted backend.
+MCP-Sentinel is an MCP server for your client and an MCP client for every upstream server. You add **only Sentinel** to your client. Every other server is connected through Sentinel's dashboard or API, and its tools appear in the client as `<server-slug>__<tool>`.
+
+```
+Claude Desktop ──stdio──► python -m sentinel.bridge ──HTTP (127.0.0.1)──► Sentinel API ──► upstream MCP servers
+Claude Code / Cursor / any Streamable-HTTP client ─────── /mcp ─────────► Sentinel API ──► upstream MCP servers
+```
 
 ## 1. Start Sentinel
 
-From the repository root, configure a local development environment and start the API:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e .
-$env:SENTINEL_DATABASE_URL = "sqlite:///./sentinel.db"
-$env:SENTINEL_AUTH_MODE = "demo"
-python -m uvicorn sentinel.app:app --host 127.0.0.1 --port 8443
+```bash
+pip install -e ".[dev]"
+(cd dashboard && npm install && npm run build)   # optional: the dashboard is then served by the API
+mcp-sentinel serve                                # http://127.0.0.1:8443
 ```
 
-In another terminal, start the dashboard:
+In demo mode (the default), the dashboard signs you in automatically as `local-user` with the SECURITY_ADMIN role. The demo token endpoint only answers loopback clients, and the API binds to `127.0.0.1` by default. Do not expose demo mode on a network.
 
-```powershell
-cd dashboard
-npm install
-npm run dev
+Without a built dashboard, run `npm run dev` in `dashboard/` and open http://localhost:5173. Set `SENTINEL_DASHBOARD_URL` so the approval links point at it.
+
+## 2. Claude Desktop
+
+```bash
+mcp-sentinel install-claude        # or: python -m sentinel.cli install-claude
 ```
 
-Open the Vite URL (normally `http://localhost:5173`). The included Vite configuration proxies `/v1` and `/health` to `http://localhost:8443`. If you change either port or host, update `dashboard/vite.config.js`. Sentinel's CORS allowlist must include the dashboard origin when the browser calls a different origin directly.
-
-Check `GET http://localhost:8443/health` for `{"status":"ok",...}` before troubleshooting client connections.
-
-## 2. Register and verify a server
-
-In **Integrations**, mint a demo `SECURITY_ADMIN` token for local development, or paste an administrator token issued by your OIDC provider. The token is held in browser memory for the current page session and is sent only as a Bearer token for protected management operations. Demo token minting is disabled when `SENTINEL_AUTH_MODE=oidc`.
-
-In **Servers → Add MCP Server**, supply a unique name, publisher, endpoint, transport, version, requested capabilities, and optional auth metadata. Registration returns the server ID and a starting trust status of `MONITORED`; the entry then appears in the registry. An administrator must use **Verify** to run Sentinel's current verification probe. Review the probe classification and trust result before allowing any client to use the server.
-
-The auth scheme, audience, and scopes fields are declarations only. Sentinel does not persist target credentials, authenticate to the target during registration, discover its live tool catalog, or forward target credentials through the current gateway. Do not enter secrets in these fields. The current verifier evaluates a synthetic expected behavior profile; it is not proof that the endpoint is reachable or safe.
-
-Protected registration, verification, and manual trust changes require a Bearer token with `SECURITY_ADMIN` or `SYSTEM_ADMIN`. In demo mode, a local token can also be requested with:
-
-```powershell
-curl.exe -X POST "http://localhost:8443/v1/demo/token?role=SECURITY_ADMIN&subject=local-admin"
-```
-
-For production, set `SENTINEL_AUTH_MODE=oidc` and configure issuer, audience, algorithms, and JWKS/introspection settings for your identity provider. Do not expose demo mode or its signing secret to a network.
-
-## 3. Gateway call contract
-
-The gateway's tool-call API is:
-
-```http
-POST /v1/mcp/tools/call
-Authorization: Bearer <end-user access token>
-Content-Type: application/json
-```
-
-```json
-{
-  "workflow_id": "conversation-42",
-  "server_id": "server-1234abcd",
-  "tool_name": "search_records",
-  "arguments": {"query": "example"},
-  "user_intent": "Find the requested record"
-}
-```
-
-The response decision can be `ALLOW`, `MONITOR`, `BLOCK`, or `MFA_REQUIRED`. The calling application must treat Sentinel's decision as authoritative and must not invoke or reveal a target result on `BLOCK` or `MFA_REQUIRED`. The app currently sends allowed calls to the registered endpoint's `/tools/invoke` path. A target connection or response error is returned as `execution.executed: false`; it is not represented as successful output. Ensure your target implements this expected route before connecting it.
-
-The administrator token is for management operations. Tool calls should use the calling user's validated access token so identity and roles are evaluated for that user. Do not put tokens in model prompts, tool arguments, browser bundles, or logs.
-
-## 4. Claude Desktop
-
-Claude Desktop connects to MCP servers using supported MCP transports. Sentinel's gateway is REST, so it cannot be connected directly as an MCP server. The repository includes `scripts/sentinel_mcp_adapter.py`, a local stdio adapter that exposes Sentinel's registered tools and routes calls through its REST policy gateway. The adapter:
-
-1. Implements MCP `tools/list` and `tools/call` over stdio for Claude Desktop.
-2. Obtains the user's Sentinel access token using your organization's approved local credential flow.
-3. Maps each exposed MCP tool to a fixed `server_id` and `tool_name`; do not accept these identifiers from model-controlled arguments.
-4. Sends the tool arguments to `POST /v1/mcp/tools/call` and returns results only for allowed decisions.
-5. Returns `MFA_REQUIRED` with its challenge details; the user or host application must complete step-up and retry because the adapter does not implement interactive MFA.
-
-Claude Desktop's local server configuration uses an `mcpServers` entry with a command, arguments, and environment; follow Anthropic's [Claude Desktop local MCP guide](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop) for the current config-file location and UI steps. Merge this entry into the existing config and replace the absolute paths and token:
+This merges the following entry into `claude_desktop_config.json` and keeps a timestamped `.sentinel-backup-*` copy of the old file:
 
 ```json
 {
   "mcpServers": {
-    "sentinel": {
-      "command": "<absolute-path-to-python>",
-      "args": ["<absolute-repo-path>/scripts/sentinel_mcp_adapter.py"],
-      "env": {
-        "SENTINEL_API_URL": "http://127.0.0.1:8443",
-        "SENTINEL_TOKEN": "<short-lived-user-access-token>"
-      }
+    "mcp-sentinel": {
+      "command": "/absolute/path/to/python",
+      "args": ["-m", "sentinel.bridge"],
+      "env": {"SENTINEL_API_URL": "http://127.0.0.1:8443", "SENTINEL_SUBJECT": "local-user", "SENTINEL_ROLE": "SECURITY_ADMIN"}
     }
   }
 }
 ```
 
-The adapter reads `SENTINEL_TOKEN` from its process environment as the end-user identity for tool calls. Do not commit or share a config containing this value; use a short-lived token and replace it when it expires. Restart Claude Desktop after changing its config, inspect the exposed tool list, and test with a low-risk tool. The local adapter returns `MFA_REQUIRED` details but does not perform interactive step-up; complete MFA and retry using the host application's approved flow.
+The config file is searched for in these locations:
 
-## 5. OpenAI API applications
+* macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+* Windows: `%APPDATA%\Claude\claude_desktop_config.json`, plus the Microsoft Store (MSIX) location under `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\`
 
-For OpenAI, define function tools in your own application and execute them in the application backend. The model proposes a function call; your backend maps the function name to an approved Sentinel server/tool pair and calls Sentinel. Never let model arguments select arbitrary server IDs or endpoints.
+Pass `--config <path>` to use another file. `mcp-sentinel claude-config` prints the entry without writing anything. Restart Claude Desktop afterwards.
 
-An illustrative Responses API function definition is:
+**Move existing servers behind Sentinel:**
 
-```json
-{
-  "type": "function",
-  "name": "search_records",
-  "description": "Search records through MCP-Sentinel policy enforcement",
-  "parameters": {
-    "type": "object",
-    "properties": {"query": {"type": "string"}},
-    "required": ["query"],
-    "additionalProperties": false
-  },
-  "strict": true
-}
+```bash
+mcp-sentinel import-claude --replace [--sandbox]
 ```
 
-On a function call, validate its arguments against your schema, look up the fixed server/tool mapping, and POST the gateway contract above with the end-user token and a fresh conversation workflow ID. Return the tool output to the model only when Sentinel allows execution and reports a successful execution. On `MFA_REQUIRED`, pause for the application's step-up flow, call `POST /v1/mfa/complete` with the same user's token and the challenge ID, then repeat the original gateway call. On `BLOCK`, return a concise denial without calling the target.
+This registers every other server in your Claude config with Sentinel. The command, arguments and environment are encrypted at rest. Sentinel connects to each server, pins its tools and scans them. `--sandbox` first runs each stdio server in the honeypot. `--replace` then leaves only `mcp-sentinel` in Claude's config, so nothing can reach a tool around Sentinel.
 
-The model provider does not authenticate to Sentinel in this setup; your backend does. Use HTTPS and keep OpenAI API keys, Sentinel tokens, and target credentials in server-side secret storage. This design works with OpenAI tool calling in your own application; it is not a direct “connect Sentinel” toggle in the OpenAI web UI.
+**Add servers later** under *Servers → Connect server* in the dashboard. Presets cover Filesystem, Fetch, Memory and Git, or you can enter any command or URL. Local servers (`npx`, `uvx`, `docker`, `python`, …) run as child processes of the API, with a minimal inherited environment plus the variables you provide. Remote servers can use Streamable HTTP, with automatic fallback to legacy HTTP+SSE.
 
-OpenAI's Responses API can also connect directly to a remote MCP server using a tool definition with `type: "mcp"`, `server_label`, and `server_url`, with optional authorization and approval settings. That route becomes available only after an MCP adapter exposes Sentinel tools over an MCP-compatible remote transport; Sentinel's current REST API URL is not a valid MCP `server_url`. See the official [OpenAI remote MCP tool guide](https://platform.openai.com/docs/guides/tools-remote-mcp) and keep approval enabled while evaluating tools.
+### Tool list refresh
 
-## 6. Sandbox and verification result semantics
+Sentinel sends `notifications/tools/list_changed` whenever its catalogue changes. Claude Desktop does not reliably act on that notification and caches the tool list for the session. For that reason the bridge also exposes four meta-tools that work immediately:
 
-The dashboard's standalone sandbox form compares expected and simulated observed behavior profiles using Sentinel's sandbox policy engine. Registration and Verify use a synthetic profile that declares network access to the configured endpoint and disallows process spawning and environment access. Neither flow starts the target in a container, connects to it, invokes a real tool, nor performs a live penetration test. Display those results as policy-probe evidence only.
+| Meta-tool | Purpose |
+|---|---|
+| `sentinel_discover_tools` | list everything currently available through Sentinel, including servers added after Claude started |
+| `sentinel_invoke` | call any of those tools by exact name. This goes through the **same enforcement** and is not a bypass |
+| `sentinel_status` | pending approvals, active leases, recent decisions for this session |
+| `sentinel_explain_decision` | explain a decision from the receipt id shown in a result |
 
-For production use, add a separately isolated runner that launches the server with explicit CPU, memory, filesystem, network, and credential boundaries, captures runtime observations, and stores signed evidence. Do not label a synthetic probe as a live server test.
+To see newly added servers as native tools, toggle the `mcp-sentinel` connector off and on, or restart Claude Desktop.
 
-## Useful endpoints
+### What Claude sees
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /health` | API health |
-| `GET /v1/mcp/tools/list` | Sentinel's currently registered tool catalog |
-| `POST /v1/mcp/tools/call` | Identity, policy, and risk decision plus permitted execution |
-| `POST /v1/servers` | Admin-only server registration |
-| `POST /v1/servers/{server_id}/verify` | Admin-only synthetic verification probe |
-| `POST /v1/sandbox/probe` | Standalone expected-versus-observed policy probe |
+* **Descriptions are pinned.** Claude receives the approved definition with a one-line Sentinel note, never a later live version.
+* **Every result ends with a banner**, for example `🛡️ MCP-Sentinel · MONITOR · risk 30/100 (MONITOR) · receipt 1a2b3c4d`, so the model and the user can both see the decision.
+* **Blocked calls** return `isError: true` with the reason and the receipt id. The model is told not to try to work around the block.
+* **Step-up.** When a call needs MFA or human approval, the bridge **holds the call open**. It sends progress notifications every few seconds and opens the approval page in your browser (`SENTINEL_OPEN_BROWSER=1`). After you approve with TOTP, demo confirmation or an IdP MFA claim, the identical call is retried and its result is returned in the same turn. If nobody approves within `SENTINEL_WAIT_SECONDS` (default 50), the result contains the approval link, and Claude can call the tool again after approval.
 
-See [API](api.md), [Security model](security-model.md), and [Limitations](limitations.md) for the project's broader control-plane behavior and current limitations.
+### Bridge environment
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SENTINEL_API_URL` | `http://127.0.0.1:8443` | Sentinel API |
+| `SENTINEL_TOKEN` | — | user access token (OIDC mode). In demo mode a loopback demo token is minted and renewed automatically |
+| `SENTINEL_SUBJECT` / `SENTINEL_ROLE` | `local-user` / `SECURITY_ADMIN` | identity for demo tokens |
+| `SENTINEL_OPEN_BROWSER` | `1` | open approval pages automatically |
+| `SENTINEL_WAIT_SECONDS` | API setting (50) | how long a call is held open waiting for approval |
+| `SENTINEL_WORKFLOW_ID` | per session | fixed workflow id. By default a new workflow starts after 30 minutes idle (`SENTINEL_WORKFLOW_IDLE_SECONDS`) |
+
+The bridge writes only MCP messages to stdout, and diagnostics go to stderr. On Windows it forces UTF-8 with `\n` line endings.
+
+## 3. Claude Code, Cursor and other Streamable HTTP clients
+
+Sentinel serves MCP Streamable HTTP at `http://127.0.0.1:8443/mcp`. It supports protocol versions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05, `Mcp-Session-Id` sessions, and returns 202 for notifications. The endpoint enforces Origin and Host validation (DNS-rebinding defence) and requires a bearer token:
+
+```bash
+TOKEN=$(mcp-sentinel token --role SECURITY_ADMIN --subject local-user | python -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+claude mcp add --transport http mcp-sentinel http://127.0.0.1:8443/mcp --header "Authorization: Bearer $TOKEN"
+```
+
+When the client supports URL-mode elicitation, step-up is requested through it. Otherwise the call is held open while the dashboard's approval inbox pops up.
+
+## 4. Your own agent or application (REST)
+
+Applications that run their own tool loop, for example with any LLM provider's function calling, can use the REST policy gateway directly:
+
+```http
+POST /v1/mcp/tools/call
+Authorization: Bearer <end-user access token>
+
+{"workflow_id": "conversation-42", "exposed_name": "github__create_issue",
+ "arguments": {"title": "…"}, "user_intent": "File the bug the user described", "agent_id": "my-agent"}
+```
+
+You can also pass `server_id` + `tool_name` instead of `exposed_name`. The response contains:
+
+* `decision`, `risk_score`, `state`, `reasons`, `factors` and `receipt_id`;
+* `explainability`: the gate trace, likelihood, impact and policy;
+* `mfa_challenge_id` / `approval_id` and `approval_url` when an obligation is pending;
+* `execution`, `output` (already passed through the output firewall) and `mcp_result` for executed calls.
+
+Treat the decision as authoritative. Map each tool name your model can call to a **fixed** server/tool pair, and never let model output choose server ids or endpoints. Keep tokens and upstream credentials server-side.
+
+## 5. Production identity
+
+Set `SENTINEL_AUTH_MODE=oidc` with `SENTINEL_JWT_ISSUER`, `SENTINEL_JWT_AUDIENCE` and `SENTINEL_OIDC_JWKS_URL` (or `SENTINEL_OIDC_INTROSPECT_URL`). A Keycloak realm is included in `identity/keycloak/`. HS* algorithms are rejected in OIDC mode, demo tokens and demo confirmation are disabled, and step-up uses TOTP or the IdP's MFA claims (`acr`/`amr`). Give the bridge a short-lived user token through `SENTINEL_TOKEN`, and never put it in prompts or commit it.
