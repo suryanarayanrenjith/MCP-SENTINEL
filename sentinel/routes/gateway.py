@@ -91,6 +91,7 @@ def tools_call(
         "exposed_name": outcome.exposed_name,
         "explainability": d.explainability,
         "mcp_result": outcome.mcp_result(settings.result_banner),
+        "sandbox": outcome.sandbox,
     }
     if d.decision not in EXECUTABLE_DECISIONS:
         return result

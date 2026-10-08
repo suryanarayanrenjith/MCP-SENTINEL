@@ -260,9 +260,7 @@ class ControlPlane:
             server_id=server.server_id, tool_name=tool.tool_name, scope_hash=scope_hash or None,
         )
         mfa_ok = identity.mfa_satisfied or lease is not None
-        request_hash = canonical_hash(
-            {"wf": request.workflow_id, "server": server.server_id, "tool": tool.tool_name, "args": request.arguments, "sub": identity.subject}
-        )[:32]
+        request_hash = self.request_hash(request, server.server_id, tool.tool_name, identity.subject)
         approval = self._approved(request_hash)
         dest_str = ",".join(d.raw for d in destinations)[:500]
 
@@ -468,6 +466,7 @@ class ControlPlane:
         if challenge is not None:
             challenge.receipt_id = finished.receipt_id or ""
             self.mfa.save(challenge)
+        finished.approval_consumed = approval is not None and decision in EXECUTABLE_DECISIONS
         self.last_context = {
             "server": server, "tool": tool, "capabilities": capabilities, "primary": primary, "sensitivity": sensitivity,
             "data_class": data_class, "flow_roles": flow_roles, "identity": identity,
@@ -475,6 +474,11 @@ class ControlPlane:
         return finished, identity
 
     # ------------------------------------------------------------------------------------------
+    @staticmethod
+    def request_hash(request: ToolCallRequest, server_id: str, tool_name: str, subject: str) -> str:
+        """Identity of one exact request (workflow, tool, arguments, user): what an approval is bound to."""
+        return canonical_hash({"wf": request.workflow_id, "server": server_id, "tool": tool_name, "args": request.arguments, "sub": subject})[:32]
+
     def _approved(self, request_hash: str) -> ApprovalRow | None:
         now = utcnow()
         rows = (

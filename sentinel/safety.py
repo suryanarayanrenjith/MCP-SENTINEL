@@ -67,9 +67,10 @@ def assess(
         if verdict == "MALICIOUS":
             issues.append(("CRITICAL", f"tool '{tool}' behaved maliciously in the sandbox audit: {'; '.join(result.get('reasons', [])[:2])}",
                            "Remove this server, or disable the tool, and report it to its publisher."))
-        elif verdict == "SUSPICIOUS":
-            issues.append(("HIGH", f"tool '{tool}' showed unexpected behaviour in the sandbox audit: {'; '.join(result.get('reasons', [])[:2])}",
-                           "Review what the tool does before allowing it; Sentinel asks for approval when it repeats."))
+        elif verdict in {"SUSPICIOUS", "DANGEROUS"}:
+            # a synthetic run is a hint, not proof: each real call is pre-flighted and escalated anyway
+            issues.append(("MEDIUM", f"tool '{tool}' showed unexpected behaviour in the sandbox audit: {'; '.join(result.get('reasons', [])[:2])}",
+                           "Review what the tool does before allowing it; Sentinel asks for approval whenever a call repeats it."))
 
     worst = max((SEVERITY_RANK.get(s, 0) for s, _, _ in issues), default=0)
     verdict = "UNSAFE" if worst >= SEVERITY_RANK["HIGH"] else "CAUTION" if worst == SEVERITY_RANK["MEDIUM"] else "SAFE"
