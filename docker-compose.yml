@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel
+      POSTGRES_DB: sentinel
+    ports:
+      - "5432:5432"
+    volumes:
+      - sentinel-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  opa:
+    image: openpolicyagent/opa:0.70.0
+    command: ["run", "--server", "--addr", ":8181", "/policies"]
+    volumes:
+      - ./policy/rego:/policies:ro
+    ports:
+      - "8181:8181"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./identity/keycloak:/opt/keycloak/data/import:ro
+
+  soc-mcp:
+    build:
+      context: .
+      dockerfile: docker/soc.Dockerfile
+    environment:
+      SOC_SERVER_COMPROMISED: "false"
+    ports:
+      - "9001:9001"
+
+  sentinel:
+    build:
+      context: .
+      dockerfile: docker/sentinel.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      soc-mcp:
+        condition: service_started
+    environment:
+      SENTINEL_AUTH_MODE: demo
+      SENTINEL_DATABASE_URL: postgresql+psycopg2://sentinel:sentinel@postgres:5432/sentinel
+      SENTINEL_REDIS_URL: redis://redis:6379/0
+      SENTINEL_OPA_URL: http://opa:8181
+      SENTINEL_OPA_ENABLED: "false"
+      SENTINEL_JWT_ISSUER: http://localhost:8080/realms/mcp-sentinel
+      SENTINEL_JWT_AUDIENCE: mcp-sentinel
+      SENTINEL_DEMO_JWT_SECRET: change-me-demo-only-not-for-production
+      SENTINEL_CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+      SENTINEL_SOC_ENDPOINT: http://soc-mcp:9001/mcp
+    ports:
+      - "8443:8443"
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/dashboard.Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - sentinel
+
+volumes:
+  sentinel-pg:
