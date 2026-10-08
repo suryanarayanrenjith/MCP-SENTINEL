@@ -2,7 +2,8 @@ import { useState } from "react";
 import { api, usePoll } from "../api.js";
 import { Card, Chips, Drawer, Empty, ErrorNote, Findings, Json, Modal, Pill, Tabs } from "../components/ui.jsx";
 import { routeTo, timeAgo } from "../format.js";
-import { GradeBadge } from "./Scanner.jsx";
+import { GradeBadge, SafetyVerdict } from "./Scanner.jsx";
+import { AuditTable } from "../components/sandbox.jsx";
 
 // Official reference servers, pinned (an unpinned `npx -y pkg` can change code on any launch).
 const PRESETS = [
@@ -68,6 +69,10 @@ function AddServerModal({ onClose, onDone, toast }) {
           <Pill value={result.trust_status} />
           <Pill value={result.risk_state} />
         </div>
+        <SafetyVerdict safety={result.safety} />
+        {result.behavior_audit && (
+          <div className="notice small">🧪 <strong>Behaviour audit running</strong> ({result.behavior_audit.backend} sandbox): {result.behavior_audit.note}. Follow it under the server's <em>Sandbox</em> tab; the verdict above updates when it finishes.</div>
+        )}
         {result.sandbox && (
           <Card title="Honeypot sandbox" subtitle="Launched with a decoy home directory, canary credentials and a recording egress proxy">
             <div className="row gap"><Pill value={result.sandbox.classification} /> <span className="muted small">{result.sandbox.evidence?.duration_s}s</span></div>
@@ -121,7 +126,7 @@ function AddServerModal({ onClose, onDone, toast }) {
             <label>Arguments <span className="muted small">(one per line)</span><textarea className="input mono" rows={4} value={form.args} onChange={(e) => set("args", e.target.value)} /></label>
             <label>Environment <span className="muted small">(KEY=value per line — stored encrypted, never shown to the model)</span><textarea className="input mono" rows={3} value={form.env} onChange={(e) => set("env", e.target.value)} placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=…" /></label>
             <label>Working directory <span className="muted small">(optional)</span><input className="input mono" value={form.cwd} onChange={(e) => set("cwd", e.target.value)} /></label>
-            <label className="checkbox-row"><input type="checkbox" checked={form.sandbox} onChange={(e) => set("sandbox", e.target.checked)} /> Run the honeypot sandbox before connecting (decoy credentials, egress recording, process monitoring)</label>
+            <label className="checkbox-row"><input type="checkbox" checked={form.sandbox} onChange={(e) => set("sandbox", e.target.checked)} /> Check it before connecting. Every tool is exercised in the sandbox right after it is added; when the sandbox is switched off, a honeypot run (decoy credentials, egress recording, process monitoring) is used instead.</label>
             <p className="muted small">Pin package versions (<span className="mono">pkg@1.2.3</span>): an unpinned <span className="mono">npx -y pkg</span> can change code on any launch — Sentinel flags it as a supply-chain rug-pull risk.</p>
           </>
         ) : (
@@ -254,13 +259,15 @@ function ServerDetail({ serverId, onClose, toast, isAdmin }) {
       </div>
       <p className="mono small muted">{s.endpoint}</p>
       {s.last_error && <ErrorNote error={s.last_error} />}
+      <SafetyVerdict safety={s.safety} />
       {isAdmin && (
         <div className="row gap wrap">
           <select className="input input-sm" value={s.trust_status} onChange={(e) => act("Trust change", () => api.put(`/v1/servers/${serverId}/trust`, { trust_status: e.target.value, reason: "dashboard" }))}>
             {["TRUSTED", "MONITORED", "RESTRICTED", "QUARANTINED", "BLOCKED"].map((t) => <option key={t}>{t}</option>)}
           </select>
           <button className="btn btn-sm" onClick={() => act(s.enabled ? "Disable" : "Enable", () => api.patch(`/v1/servers/${serverId}`, { enabled: !s.enabled }))}>{s.enabled ? "Disable" : "Enable"}</button>
-          {s.transport === "stdio" && <button className="btn btn-sm" disabled={!!busy} onClick={() => act("Sandbox", () => api.post(`/v1/servers/${serverId}/sandbox`))}>{busy === "Sandbox" ? "Running honeypot…" : "Run honeypot sandbox"}</button>}
+          {s.transport === "stdio" && <button className="btn btn-sm" disabled={!!busy} onClick={() => act("Audit", () => api.post(`/v1/servers/${serverId}/audit?wait=true`))} title="exercise every tool in the sandbox on a synthetic workspace">{busy === "Audit" ? "Auditing every tool…" : "Re-run sandbox audit"}</button>}
+          {s.transport === "stdio" && <button className="btn btn-sm" disabled={!!busy} onClick={() => act("Sandbox", () => api.post(`/v1/servers/${serverId}/sandbox`))}>{busy === "Sandbox" ? "Running honeypot…" : "Honeypot run"}</button>}
           <button className="btn btn-sm btn-danger" onClick={() => { if (window.confirm(`Remove ${s.server_name} from Sentinel?`)) act("Remove", async () => { await api.del(`/v1/servers/${serverId}`); onClose(); }); }}>Remove</button>
         </div>
       )}
@@ -276,6 +283,15 @@ function ServerDetail({ serverId, onClose, toast, isAdmin }) {
         </table>
       )}
       {tab === "Findings" && <Findings items={s.findings} />}
+      {tab === "Sandbox" && s.transport === "stdio" && (
+        <div className="stack">
+          <h4>Behaviour audit</h4>
+          <p className="muted small">Every tool, run once in the sandbox with schema-derived arguments on a synthetic workspace. What each tool did becomes its behaviour contract: later calls that go beyond it are escalated.</p>
+          <AuditTable audit={s.behavior_audit} />
+          {(s.sandbox_learned_hosts || []).length > 0 && <div className="small muted">Destinations approved by a person: {s.sandbox_learned_hosts.join(", ")}</div>}
+          <h4>Honeypot</h4>
+        </div>
+      )}
       {tab === "Sandbox" && (s.sandbox_report ? (
         <div className="stack">
           <div className="row gap"><Pill value={s.sandbox_report.classification} /><span className="muted small">{s.sandbox_report.evidence?.duration_s}s · decoys: {(s.sandbox_report.evidence?.decoys || []).join(", ")}</span></div>
@@ -312,7 +328,7 @@ export default function Servers({ toast, isAdmin, selected }) {
       <div className="page-head">
         <div>
           <h1>MCP servers</h1>
-          <p className="muted">Every server Claude can reach goes through Sentinel. Local servers are launched by Sentinel (and can be honeypot-sandboxed first); remote ones are reached over Streamable HTTP or SSE.</p>
+          <p className="muted">Every server Claude can reach goes through Sentinel. Local servers are launched by Sentinel, audited tool by tool in the sandbox when added, and every call to them is pre-flighted in the sandbox; remote ones are reached over Streamable HTTP or SSE.</p>
         </div>
         {isAdmin && (
           <div className="row gap">

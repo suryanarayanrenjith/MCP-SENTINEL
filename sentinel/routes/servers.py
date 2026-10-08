@@ -13,12 +13,15 @@ from integrity.crypto import canonical_hash
 from integrity.discovery import discover_server, server_findings
 from integrity.registry import unique_slug
 from sandbox.honeypot import run_honeypot
+from sandbox.shadow import get_sandbox
 from sentinel import clientconfig
 from sentinel.config import Settings, get_settings
 from sentinel.db import LeaseRow, ServerRow, ToolChangeRow, ToolRow
 from sentinel.deps import admin_identity, db_session, reader
 from sentinel.leases import CapabilityLeaseManager
 from sentinel.receipts import AuditStore
+from sentinel.safety import assess as safety_assess
+from sentinel.safety import blocking_reasons
 from sentinel.secrets_box import decrypt_json, encrypt_json, mask_mapping
 from sentinel.types import TrustStatus, utcnow, worse_trust
 from sentinel.upstream import get_manager
@@ -79,6 +82,15 @@ def _display_endpoint(transport: str, config: dict[str, Any]) -> str:
     return str(config.get("url") or "")[:500]
 
 
+def _audit_brief(report: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not report:
+        return None
+    return {k: report.get(k) for k in ("status", "backend", "summary", "note", "startup_hosts", "startup_processes",
+                                        "tool_list_mismatch", "started_at", "finished_at")} | {
+        "tools": {name: {k: v for k, v in t.items() if k in {"verdict", "reasons", "hosts", "processes", "writes", "deletes", "error", "duration_ms"}}
+                  for name, t in (report.get("tools") or {}).items()}}
+
+
 def server_view(row: ServerRow, session: Session, *, detail: bool = False) -> dict[str, Any]:
     manager = get_manager()
     meta = row.metadata_json or {}
@@ -110,6 +122,9 @@ def server_view(row: ServerRow, session: Session, *, detail: bool = False) -> di
         "description": meta.get("description", ""),
         "sandbox_classification": (meta.get("sandbox_report") or {}).get("classification"),
         "vuln_scan": meta.get("vuln_scan"),
+        "safety": meta.get("safety"),
+        "behavior_audit": _audit_brief(meta.get("behavior_audit")),
+        "sandbox_learned_hosts": meta.get("sandbox_learned_hosts") or [],
         "auth_scheme": meta.get("auth_scheme", "none"),
         "auth_audience": meta.get("auth_audience", ""),
         "auth_scopes": meta.get("auth_scopes", []),
@@ -225,7 +240,10 @@ def register(session: Session, settings: Settings, body: RegisterServerBody, reg
     AuditStore(session).write_event("server_registered", "INFO", f"server '{row.server_name}' registered ({transport})",
                                     {"server_id": server_id, "by": registered_by, "findings": row.findings[:5]})
     sandbox = None
-    if body.run_sandbox and transport == "stdio" and row.trust_status != TrustStatus.QUARANTINED.value:
+    # with the shadow sandbox on, every tool is exercised in containment after discovery (behaviour audit);
+    # the process-level honeypot is the fallback when the sandbox is switched off
+    use_audit = transport == "stdio" and settings.sandbox_audit_on_register and get_sandbox().enabled
+    if body.run_sandbox and transport == "stdio" and not use_audit and row.trust_status != TrustStatus.QUARANTINED.value:
         sandbox = run_honeypot(server_id, config, timeout=settings.upstream_connect_timeout_seconds)
         _apply_sandbox(session, row, sandbox)
     discovery = None
@@ -246,9 +264,17 @@ def register(session: Session, settings: Settings, body: RegisterServerBody, reg
         from sentinel.routes.scans import run_server_scan, scan_view
 
         try:
-            scan = scan_view(run_server_scan(session, row, active=False, by=registered_by, settings=settings))
+            scan_row = run_server_scan(session, row, active=False, by=registered_by, settings=settings)
+            scan = {**scan_view(scan_row), "vulnerabilities": scan_row.report.get("vulnerabilities", [])}
         except Exception as exc:  # a scan problem never blocks registration
             scan = {"error": str(exc)[:300]}
+    audit = None
+    if use_audit and discovery and not discovery.get("error") and row.trust_status != TrustStatus.QUARANTINED.value:
+        from sentinel.routes.sandbox import start_behavior_audit
+
+        start_behavior_audit(server_id)
+        audit = {"status": "RUNNING", "backend": get_sandbox().status()["active_backend"],
+                 "note": "every tool is being exercised in the sandbox on a synthetic workspace; the verdict updates when it finishes"}
     return {
         "server_id": server_id,
         "slug": row.slug,
@@ -260,8 +286,10 @@ def register(session: Session, settings: Settings, body: RegisterServerBody, reg
         "auth_audience": body.auth_audience,
         "auth_scopes": body.auth_scopes,
         "sandbox": sandbox,
+        "behavior_audit": audit,
         "discovery": discovery,
         "scan": scan,
+        "safety": (row.metadata_json or {}).get("safety") or safety_assess(scan=None, findings=row.findings or [], honeypot=sandbox),
         "message": f"Server '{row.server_name}' registered" + (" and connected." if discovery and not discovery.get("error") else "."),
     }
 
@@ -386,6 +414,7 @@ def delete_server(server_id: str, session: Session = Depends(db_session), identi
     if not row:
         raise HTTPException(404, f"Server {server_id} not found")
     get_manager().disconnect(server_id)
+    get_sandbox().forget(server_id)
     CapabilityLeaseManager(session, get_settings()).revoke_server(server_id, "server removed")
     for tool in session.query(ToolRow).filter(ToolRow.server_id == server_id).all():
         session.delete(tool)
@@ -491,6 +520,11 @@ def update_server_trust(
         raise HTTPException(400, f"Invalid trust status. Must be one of: {sorted(valid)}")
     previous = row.trust_status
     row.trust_status = body.trust_status
+    meta = dict(row.metadata_json or {})
+    if body.trust_status in {TrustStatus.TRUSTED.value, TrustStatus.MONITORED.value} and (meta.get("safety") or {}).get("verdict") == "UNSAFE":
+        meta["safety_accepted"] = blocking_reasons(meta["safety"])  # an admin accepted these risks; re-scans keep it
+        meta["safety_accepted_by"] = identity.subject
+        row.metadata_json = meta
     if body.trust_status in {TrustStatus.QUARANTINED.value, TrustStatus.BLOCKED.value}:
         CapabilityLeaseManager(session, get_settings()).revoke_server(server_id, f"server set to {body.trust_status}")
         if body.trust_status == TrustStatus.BLOCKED.value:

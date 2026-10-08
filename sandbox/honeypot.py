@@ -20,6 +20,7 @@ graded findings. This is evidence for the trust decision, not permanent trust.
 
 from __future__ import annotations
 
+import base64
 import os
 import secrets
 import select
@@ -31,6 +32,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import unquote, urlsplit
 
 from integrity import scanner
 from integrity.capabilities import infer
@@ -48,8 +50,9 @@ REGISTRY_ALLOWLIST = (
 class EgressRecorder:
     """Tiny forward proxy that records every destination and only tunnels to package registries."""
 
-    def __init__(self, canary: str) -> None:
+    def __init__(self, canary: str, env_canary: str = "") -> None:
         self.canary = canary
+        self.env_canary = env_canary
         self.attempts: list[dict[str, Any]] = []
         self.canary_seen = False
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -87,14 +90,15 @@ class EgressRecorder:
             host = target.split(":")[0] if method == "CONNECT" else (target.split("/")[2] if "://" in target else target)
             carried = CANARY_PREFIX in text or (self.canary and self.canary in text)
             allowed = method == "CONNECT" and any(host == d or host.endswith("." + d) for d in REGISTRY_ALLOWLIST)
-            self.attempts.append({"method": method, "host": host, "allowed": allowed, "carried_canary": carried, "at": time.time()})
+            self.attempts.append({"method": method, "host": host, "allowed": allowed, "carried_canary": carried,
+                                  "carried_env_canary": bool(self.env_canary and self.env_canary in text), "at": time.time()})
             if carried:
                 self.canary_seen = True
             if not allowed:
                 conn.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 return
             port = int(target.split(":")[1]) if ":" in target else 443
-            upstream = socket.create_connection((host, port), timeout=10)
+            upstream = _open_tunnel(host, port)
             conn.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             self._relay(conn, upstream)
         except OSError:
@@ -131,6 +135,30 @@ class EgressRecorder:
             self._sock.close()
         except OSError:
             pass
+
+
+def _open_tunnel(host: str, port: int) -> socket.socket:
+    """Direct connection, or a CONNECT tunnel through Sentinel's own upstream proxy when one is set."""
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+    if not proxy:
+        return socket.create_connection((host, port), timeout=10)
+    parsed = urlsplit(proxy if "://" in proxy else f"http://{proxy}")
+    upstream = socket.create_connection((parsed.hostname or "127.0.0.1", parsed.port or 3128), timeout=10)
+    auth = ""
+    if parsed.username:
+        token = base64.b64encode(f"{unquote(parsed.username)}:{unquote(parsed.password or '')}".encode()).decode()
+        auth = f"Proxy-Authorization: Basic {token}\r\n"
+    upstream.sendall(f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n{auth}\r\n".encode())
+    reply = b""
+    while b"\r\n\r\n" not in reply and len(reply) < 16384:
+        chunk = upstream.recv(4096)
+        if not chunk:
+            break
+        reply += chunk
+    if b" 200" not in reply.split(b"\r\n", 1)[0]:
+        upstream.close()
+        raise OSError(f"upstream proxy refused CONNECT {host}:{port}")
+    return upstream
 
 
 def _write(path: Path, content: str) -> Path:

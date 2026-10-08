@@ -30,6 +30,7 @@ from sentinel.db import ServerRow, ToolRow, WorkflowCallRow
 from sentinel.dlp import redact_structure, redact_text, scan_secrets, strip_invisible
 from sentinel.injection import InjectionGuard
 from sentinel.pipeline import ControlPlane
+from sentinel.preflight import PreflightGuard
 from sentinel.store import StateStore
 from sentinel.types import (
     EXECUTABLE_DECISIONS,
@@ -67,6 +68,7 @@ class CallOutcome:
     approval_url: str | None = None
     exposed_name: str = ""
     telemetry: dict[str, Any] = field(default_factory=dict)
+    sandbox: dict[str, Any] | None = None  # pre-flight verdict + effect preview
 
     def mcp_result(self, banner: bool = True) -> dict[str, Any]:
         content = list(self.content)
@@ -221,30 +223,58 @@ class Gateway:
         decision, identity = self.cp.authorize(authorization, request, agent_hint=agent_hint)
         tool = self.cp.registry.get_tool(request.server_id, request.tool_name)
         exposed = (tool.exposed_name if tool is not None else None) or request.tool_name
-        outcome = CallOutcome(decision=decision, identity=identity, exposed_name=exposed)
         call_id = self.cp.last_call_id
-        if decision.decision not in EXECUTABLE_DECISIONS:
-            text, url = decision_message(decision, self.settings, exposed)
-            outcome.content = [{"type": "text", "text": text}]
-            outcome.approval_url = url
-            return outcome
         server = self.session.get(ServerRow, request.server_id)
-        assert server is not None and tool is not None
+        guard = PreflightGuard(self)
+        ctx, info = None, None
+        if decision.decision not in {Decision.BLOCK, Decision.QUARANTINE} and guard.applies(server, tool):
+            # zero trust: the call first runs in the sandbox against a copy of the files
+            ctx, decision, info = guard.check(server, tool, request, decision, identity)
+        outcome = CallOutcome(decision=decision, identity=identity, exposed_name=exposed, sandbox=info)
+        finished = False
         try:
-            raw = self.manager.call_tool(server, request.tool_name, request.arguments)
-            result, telemetry = raw["result"], raw["telemetry"]
-        except (UpstreamError, McpError, OSError) as exc:
-            outcome.error = str(exc)
-            outcome.telemetry = getattr(exc, "telemetry", {}) or {}
-            outcome.content = [{"type": "text", "text": f"MCP-Sentinel allowed the call but the upstream server failed: {exc}"}]
-            self._mark_executed(call_id, False)
-            self.cp.audit.write_event("upstream_error", "LOW", f"{exposed}: {str(exc)[:200]}",
-                                      {"server_id": server.server_id, "tool": request.tool_name, "receipt_id": decision.receipt_id})
+            if decision.decision not in EXECUTABLE_DECISIONS:
+                text, url = decision_message(decision, self.settings, exposed)
+                outcome.content = [{"type": "text", "text": text}]
+                outcome.approval_url = url
+                return outcome
+            assert server is not None and tool is not None
+            try:
+                raw = self.manager.call_tool(server, request.tool_name, request.arguments)
+                result, telemetry = raw["result"], raw["telemetry"]
+            except (UpstreamError, McpError, OSError) as exc:
+                finished = True
+                guard.after(ctx, executed=True, server=server, tool=tool, request=request, decision=decision, info=info)
+                outcome.error = str(exc)
+                outcome.telemetry = getattr(exc, "telemetry", {}) or {}
+                outcome.content = [{"type": "text", "text": f"MCP-Sentinel allowed the call but the upstream server failed: {exc}"}]
+                self._mark_executed(call_id, False)
+                self.cp.audit.write_event("upstream_error", "LOW", f"{exposed}: {str(exc)[:200]}",
+                                          {"server_id": server.server_id, "tool": request.tool_name, "receipt_id": decision.receipt_id})
+                return outcome
+            outcome.executed = True
+            outcome.telemetry = telemetry
+            finished = True
+            post = guard.after(ctx, executed=True, server=server, tool=tool, request=request, decision=decision, info=info)
+            self._guard_output(outcome, server, tool, request, result, decision, call_id)
+            if post.get("changes"):
+                outcome.output_report["undo_id"] = decision.receipt_id
+                outcome.output_report["file_changes"] = len(post["changes"])
+            if post.get("evasion"):
+                evasion = post["evasion"]
+                restored = len((evasion.get("reverted") or {}).get("restored", []))
+                outcome.output_report["sandbox_evasion"] = evasion
+                outcome.structured = None
+                outcome.content = [{"type": "text", "text": (
+                    f"⚠️ MCP-Sentinel stopped '{exposed}': {evasion.get('message')}. Sentinel restored {restored} file(s) and "
+                    "quarantined the tool. Do not retry it; tell the user to review the server in the Sentinel dashboard "
+                    f"(receipt {(decision.receipt_id or '')[:8]})."
+                )}]
+                outcome.is_error = True
             return outcome
-        outcome.executed = True
-        outcome.telemetry = telemetry
-        self._guard_output(outcome, server, tool, request, result, decision, call_id)
-        return outcome
+        finally:
+            if not finished:
+                guard.after(ctx, executed=False)
 
     def _mark_executed(self, call_id: int | None, executed: bool, data_class: str | None = None) -> None:
         if call_id is None:

@@ -30,9 +30,11 @@ Dashboard (React) ──REST /v1────────────────
 
    Gates that pass contribute **evidence** to the risk engine instead: the trust prior, schema drift, soft input findings, sequence transitions, context mismatch, the lethal trifecta, prompt-injection in arguments, velocity, behavioural drift and workflow risk memory. See [risk-engine.md](risk-engine.md).
 4. **Obligations**. MFA step-up (RFC 6238 TOTP, the IdP ACR/AMR claims, or demo confirmation) and/or human approval (single-use and bound to a request hash). When either is satisfied, a **capability lease** is granted. Each lease is bound to the workflow, subject, server, tool and capability, and for CRITICAL tools to the exact arguments (`scope_hash`).
-5. **Execution** (`sentinel/upstream/manager.py`). The manager runs the call on a persistent upstream session. It snapshots the server's process tree before and after the call to record new children and new remote hosts.
-6. **Output firewall** (`Gateway._guard_output`). It strips invisible/ANSI characters and redacts secrets with DLP (unless SECRET_ACCESS was authorised and the decision is not RESTRICT). Prompt injections are spotlighted or quarantined. The behavioural baseline is updated, secret fingerprints are added to the workflow's taint store, and the output is **withheld** if the tool misbehaved during the call.
-7. **Receipt** (`sentinel/receipts.py`). The receipt is appended to a SHA-256 hash chain and signed with Ed25519. It records the gate trace, the risk factors, likelihood × impact, and the obligations.
+5. **Sandbox pre-flight** (`sentinel/preflight.py`, `sandbox/shadow.py`). For local (stdio) servers the call first runs against a copy of the server's folders in a Docker sandbox (no network, decoy credentials), or in the process sandbox when Docker is unavailable. The verdict can block the call, escalate it to a human with an effect preview, or let it through. See [sandbox.md](sandbox.md).
+6. **Execution** (`sentinel/upstream/manager.py`). The manager runs the call on a persistent upstream session. It snapshots the server's process tree before and after the call to record new children and new remote hosts.
+7. **Effect verification**. The real folders are diffed against the pre-call mirror: every change is journalled for undo, and changes the sandbox did not predict are reverted and the tool quarantined.
+8. **Output firewall** (`Gateway._guard_output`). It strips invisible/ANSI characters and redacts secrets with DLP (unless SECRET_ACCESS was authorised and the decision is not RESTRICT). Prompt injections are spotlighted or quarantined. The behavioural baseline is updated, secret fingerprints are added to the workflow's taint store, and the output is **withheld** if the tool misbehaved during the call.
+9. **Receipt** (`sentinel/receipts.py`). The receipt is appended to a SHA-256 hash chain and signed with Ed25519. It records the gate trace, the risk factors, likelihood × impact, and the obligations.
 
 ## Tool catalogue and integrity
 
@@ -59,7 +61,8 @@ Dashboard (React) ──REST /v1────────────────
 |---|---|
 | `sentinel/` | app, pipeline, gateway, MCP frontend/bridge, receipts, DLP, netutil, CLI |
 | `sentinel/upstream/` | MCP client (stdio, Streamable HTTP, legacy SSE) and connection manager |
-| `sentinel/routes/` | REST API (core, gateway, servers, scans, tools, approvals, audit, policy) |
+| `sentinel/routes/` | REST API (core, gateway, servers, scans, sandbox, tools, approvals, audit, policy) |
+| `sentinel/preflight.py` · `sentinel/safety.py` | what the gateway does with a sandbox verdict · the SAFE / CAUTION / NOT SAFE verdict for a server |
 | `sentinel/clientconfig.py` | Claude Desktop / Claude Code / Cursor / VS Code config discovery, parsing and `${VAR}` expansion |
 | `identity/` | OIDC/JWT verification, demo tokens, Keycloak realm |
 | `policy/` | Python PDP, admin rules, OPA/Rego bundle |
@@ -69,7 +72,7 @@ Dashboard (React) ──REST /v1────────────────
 | `dataflow/` | data classification, exfiltration guard, content taint |
 | `mfa/` | TOTP, enrolment, step-up challenges |
 | `monitoring/` | process monitor and statistical behavioural baselines |
-| `sandbox/` | honeypot sandbox (also hosts active vulnerability probes for local servers) |
+| `sandbox/` | shadow execution: Docker and process backends, in-container supervisor (`agent.py`), verdict rules, workspace mirrors and undo, launch recipes; plus the honeypot (which also hosts active vulnerability probes) |
 | `dashboard/` | React UI (it never makes security decisions) |
 
 ## Trust is never permanent

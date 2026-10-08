@@ -19,6 +19,9 @@ os.environ["SENTINEL_APPROVAL_WAIT_SECONDS"] = "0"
 os.environ["SENTINEL_SECRETS_KEY_FILE"] = str(TMP / "sentinel.key")
 os.environ["SENTINEL_RECEIPT_KEY_FILE"] = str(TMP / "receipt_ed25519.pem")
 os.environ["SENTINEL_STATIC_DASHBOARD_DIR"] = str(TMP / "no-dashboard")
+os.environ["SENTINEL_SANDBOX_DIR"] = str(TMP / "sandbox")
+os.environ["SENTINEL_SANDBOX_MODE"] = "process"  # deterministic and fast; the Docker backend has its own test
+os.environ["SENTINEL_SANDBOX_AUDIT_ON_REGISTER"] = "false"  # tests run the audit synchronously where needed
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -38,8 +41,10 @@ def _reset_db():
     Re-creating a database at the same path while a previous test's worker thread still holds a
     connection lets SQLite pick up the old WAL; a fresh path per test isolates tests completely.
     """
+    from sandbox.shadow import reset_sandbox
     from sentinel.upstream.manager import reset_manager
 
+    reset_sandbox()
     os.environ["SENTINEL_DATABASE_URL"] = f"sqlite:///{(TMP / f'test-{uuid.uuid4().hex[:12]}.db').as_posix()}"
     get_settings.cache_clear()
     reset_manager()
@@ -47,6 +52,7 @@ def _reset_db():
     mcp_test_server.STATE.update({"rugpull": False, "compromised": False})
     yield
     reset_manager()
+    reset_sandbox()
     reset_engine()
 
 

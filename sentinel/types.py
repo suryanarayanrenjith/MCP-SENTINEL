@@ -251,3 +251,4 @@ class SecurityDecision(BaseModel):
     receipt_id: str | None = None
     restrictions: list[str] = Field(default_factory=list)
     explainability: dict[str, Any] = Field(default_factory=dict)
+    approval_consumed: bool = False  # a human approved exactly this request (the sandbox does not re-escalate it)

@@ -70,51 +70,24 @@ function Report({ scan }) {
   );
 }
 
-function AdhocForm({ onDone, toast, isAdmin }) {
-  const [form, setForm] = useState({ kind: "url", endpoint: "", transport: "http", command: "", args: "", bearer: "", active: false });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  async function submit(e) {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const body = form.kind === "url"
-        ? { transport: form.transport, endpoint: form.endpoint.trim(), bearer_token: form.bearer, active: form.active }
-        : { transport: "stdio", command: form.command.trim(), args: form.args.split("\n").map((a) => a.trim()).filter(Boolean), active: form.active };
-      const res = await api.post("/v1/scans", body);
-      toast(`Scan finished: grade ${res.grade}`);
-      onDone(res);
-    } catch (err) {
-      setError(err.message);
-    }
-    setBusy(false);
-  }
+export function SafetyVerdict({ safety, compact = false }) {
+  if (!safety) return null;
+  const tone = { UNSAFE: "danger", CAUTION: "warn", SAFE: "ok" }[safety.verdict] || "";
   return (
-    <form className="form" onSubmit={submit}>
-      <div className="row gap">
-        <label className="checkbox-row"><input type="radio" checked={form.kind === "url"} onChange={() => set("kind", "url")} /> Remote URL</label>
-        <label className="checkbox-row"><input type="radio" checked={form.kind === "cmd"} onChange={() => set("kind", "cmd")} /> Local command (stdio)</label>
-      </div>
-      {form.kind === "url" ? (
-        <>
-          <label>URL<input className="input mono" required value={form.endpoint} onChange={(e) => set("endpoint", e.target.value)} placeholder="https://example.com/mcp" /></label>
-          <div className="row gap">
-            <label className="grow">Transport<select className="input" value={form.transport} onChange={(e) => set("transport", e.target.value)}><option value="http">Streamable HTTP</option><option value="sse">SSE (legacy)</option></select></label>
-            <label className="grow">Bearer token <span className="muted small">(optional; analysed, never stored)</span><input className="input mono" type="password" autoComplete="off" value={form.bearer} onChange={(e) => set("bearer", e.target.value)} /></label>
-          </div>
-        </>
-      ) : (
-        <>
-          <label>Command<input className="input mono" required value={form.command} onChange={(e) => set("command", e.target.value)} placeholder="npx" /></label>
-          <label>Arguments <span className="muted small">(one per line)</span><textarea className="input mono" rows={2} value={form.args} onChange={(e) => set("args", e.target.value)} placeholder={"-y\n@modelcontextprotocol/server-memory@2026.8.31"} /></label>
-        </>
+    <div className={`safety ${tone}`} role={safety.verdict === "UNSAFE" ? "alert" : undefined}>
+      <div className="row gap wrap"><Pill value={safety.verdict} />{safety.grade && <GradeBadge scan={{ grade: safety.grade }} />}<strong className="grow">{safety.headline}</strong></div>
+      {!compact && (safety.reasons || []).length > 0 && (
+        <ul className="small">{safety.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
       )}
-      <label className="checkbox-row"><input type="checkbox" checked={form.active} onChange={(e) => set("active", e.target.checked)} /> Active probes: send injection payloads to read-only tools{form.kind === "cmd" ? " (runs inside the honeypot sandbox)" : ""}</label>
-      <ErrorNote error={error} />
-      <div className="modal-actions"><button className="btn btn-primary" disabled={busy || !isAdmin}>{busy ? "Scanning…" : "Scan"}</button></div>
-    </form>
+      {(safety.recommendations || []).length > 0 && (
+        <div className="small"><strong>Recommended fixes</strong>
+          <ol>{safety.recommendations.slice(0, compact ? 3 : 12).map((r, i) => <li key={i}>{r}</li>)}</ol>
+        </div>
+      )}
+      {!compact && (safety.contained || []).length > 0 && (
+        <div className="small muted"><strong>Contained at runtime by Sentinel:</strong> {safety.contained.join(" · ")}</div>
+      )}
+    </div>
   );
 }
 
@@ -166,7 +139,7 @@ export default function Scanner({ toast, isAdmin }) {
     <div className="stack">
       <div className="page-head"><div>
         <h1>Vulnerability scanner</h1>
-        <p className="muted">A Python port of SecureMCP, extended to the MCP protocol: OAuth and token analysis, authentication and server-integrity probes (TLS, auth bypass, Origin / DNS-rebinding, CORS, session ids), and prompt-injection testing of tools, prompts and resources. Active probes send SecureMCP's five payload types to read-only tools only; for local servers they run inside the honeypot.</p>
+        <p className="muted">Every server is scanned automatically when you add it; the scan never blocks adding it, but a severe finding marks it NOT SAFE and restricts its sensitive tools. A Python port of SecureMCP, extended to the MCP protocol: OAuth and token analysis, authentication and server-integrity probes (TLS, auth bypass, Origin / DNS-rebinding, CORS, session ids), and prompt-injection testing of tools, prompts and resources. Active probes send SecureMCP's five payload types to read-only tools only; for local servers they run inside the honeypot.</p>
       </div></div>
       <ErrorNote error={error} />
       <div className="grid-2">
@@ -193,8 +166,12 @@ export default function Scanner({ toast, isAdmin }) {
             </table>
           )}
         </Card>
-        <Card title="Scan a server without adding it" subtitle="Like `mcp-sentinel scan <url | -- command>`">
-          <AdhocForm onDone={(res) => { setCurrent(res); history.reload(); }} toast={toast} isAdmin={isAdmin} />
+        <Card title="Is it safe?" subtitle="Plain-language verdict from the scan, supply-chain checks and the sandbox audit">
+          {list.length === 0 ? <Empty>Verdicts appear here when you add a server.</Empty> : (
+            <div className="stack">{list.map((s) => (
+              <div key={s.server_id}><div className="small muted">{s.server_name}</div>{s.safety ? <SafetyVerdict safety={s.safety} compact /> : <span className="muted small">not assessed yet</span>}</div>
+            ))}</div>
+          )}
         </Card>
       </div>
       {honeypot && (

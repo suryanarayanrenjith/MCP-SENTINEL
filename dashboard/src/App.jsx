@@ -9,6 +9,7 @@ import Connect from "./views/Connect.jsx";
 import Integrity from "./views/Integrity.jsx";
 import Overview from "./views/Overview.jsx";
 import Policy from "./views/Policy.jsx";
+import Sandbox from "./views/Sandbox.jsx";
 import Scanner from "./views/Scanner.jsx";
 import Servers from "./views/Servers.jsx";
 import Tools from "./views/Tools.jsx";
@@ -20,6 +21,7 @@ const NAV = [
   ["tools", "Tools", "⚙"],
   ["integrity", "Rug pulls", "⚠"],
   ["approvals", "Approvals", "✋"],
+  ["sandbox", "Sandbox", "⧉"],
   ["workflows", "Workflows", "⇢"],
   ["audit", "Audit", "≣"],
   ["leases", "Leases", "⏱"],
@@ -213,6 +215,7 @@ export default function App() {
       case "leases": return <Leases {...common} />;
       case "policy": return <Policy {...common} />;
       case "scanner": return <Scanner {...common} />;
+      case "sandbox": return <Sandbox {...common} />;
       case "connect": return <Connect session={session} toast={toast} />;
       default: return <Overview summary={s} onReceipt={setReceipt} />;
     }

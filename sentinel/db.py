@@ -9,6 +9,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     Integer,
     String,
     Text,
@@ -236,6 +237,52 @@ class RuntimeFlagRow(Base):
     value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_by: Mapped[str] = mapped_column(String(256), default="")
+
+
+class SandboxRunRow(Base):
+    """One pre-flight (shadow) run of a tool call: what the sandbox saw and what Sentinel did."""
+
+    __tablename__ = "sandbox_runs"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    server_id: Mapped[str] = mapped_column(String(128), index=True, default="")
+    tool_name: Mapped[str] = mapped_column(String(256), default="")
+    exposed_name: Mapped[str] = mapped_column(String(300), default="")
+    workflow_id: Mapped[str] = mapped_column(String(128), default="")
+    subject: Mapped[str] = mapped_column(String(256), default="")
+    verdict: Mapped[str] = mapped_column(String(16), default="")
+    action: Mapped[str] = mapped_column(String(16), default="")  # ALLOWED | ESCALATED | BLOCKED | NOT_RUN
+    backend: Mapped[str] = mapped_column(String(16), default="")
+    reasons: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    findings: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    preview: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    receipt_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    approval_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    challenge_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    duration_ms: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class UndoRow(Base):
+    """Journal of the file changes one executed tool call made, with pre-call backups."""
+
+    __tablename__ = "undo_journal"
+
+    undo_id: Mapped[str] = mapped_column(String(64), primary_key=True)  # the call's receipt id
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    server_id: Mapped[str] = mapped_column(String(128), index=True, default="")
+    tool_name: Mapped[str] = mapped_column(String(256), default="")
+    exposed_name: Mapped[str] = mapped_column(String(300), default="")
+    workflow_id: Mapped[str] = mapped_column(String(128), default="")
+    subject: Mapped[str] = mapped_column(String(256), default="")
+    status: Mapped[str] = mapped_column(String(16), default="AVAILABLE")  # AVAILABLE | RESTORED | AUTO_REVERTED | EXPIRED
+    summary: Mapped[str] = mapped_column(String(300), default="")
+    entries: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    evasion: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    report: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    path: Mapped[str] = mapped_column(String(1024), default="")
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    restored_by: Mapped[str] = mapped_column(String(256), default="")
 
 
 class VulnScanRow(Base):

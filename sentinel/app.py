@@ -21,7 +21,7 @@ from sentinel.db import ServerRow, init_db, session_scope
 from sentinel.deps import get_store, set_store
 from sentinel.logging import configure_logging
 from sentinel.receipts import AuditStore
-from sentinel.routes import approvals, audit, core, gateway, policy, scans, servers, tools
+from sentinel.routes import approvals, audit, core, gateway, policy, sandbox, scans, servers, tools
 from sentinel.seed import seed
 from sentinel.store import StateStore
 from sentinel.types import TrustStatus, worse_trust
@@ -129,7 +129,7 @@ async def identity_error_handler(_request: Request, exc: IdentityError) -> JSONR
     return JSONResponse({"detail": exc.message, "code": exc.code}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
 
 
-for module in (core, gateway, servers, scans, tools, approvals, audit, policy):
+for module in (core, gateway, servers, scans, sandbox, tools, approvals, audit, policy):
     app.include_router(module.router)
 
 # Backwards-compatible module attribute (older code imported sentinel.app.store)

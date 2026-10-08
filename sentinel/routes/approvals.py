@@ -203,6 +203,7 @@ def approval_view(row: ApprovalRow, settings: Settings) -> dict[str, Any]:
         "risk_score": row.risk_score,
         "reasons": row.reasons or [],
         "request": row.request_json or {},
+        "sandbox": (row.request_json or {}).get("sandbox"),  # pre-flight verdict + effect preview
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "expires_at": expires.isoformat() if expires else None,
         "resolver": row.resolver,

@@ -22,3 +22,4 @@ keys/*.key
 *.db-wal
 *.db-shm
 !keys/.gitkeep
+docker/sandbox-ca/ca.crt
