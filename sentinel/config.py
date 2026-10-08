@@ -24,11 +24,9 @@ class Settings(BaseSettings):
     jwt_algorithms: str = "RS256,HS256"
     demo_jwt_secret: str = "change-me-demo-only-not-for-production"
     oidc_jwks_url: str = "http://localhost:8080/realms/mcp-sentinel/protocol/openid-connect/certs"
-    oidc_introspect_url: str = ""
     oidc_client_id: str = "mcp-sentinel"
-    oidc_client_secret: str = ""
     database_url: str = "sqlite:///./sentinel.db"
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = ""  # empty = in-process store; docker-compose sets redis://redis:6379/0
     opa_url: str = "http://localhost:8181"
     opa_enabled: bool = False
     # Local-first: bind to loopback by default (MCP Streamable HTTP guidance / DNS-rebinding defence).
@@ -47,12 +45,10 @@ class Settings(BaseSettings):
     mfa_ttl_seconds: int = 300
     approval_ttl_seconds: int = 600
     mfa_acr: str = "http://schemas.openid.net/pape/policies/2007/06/multi-factor"
-    hard_block_on_quarantine: bool = True
     allow_self_approval: bool | None = None  # None => allowed only in demo mode
     demo_token_loopback_only: bool = True
 
     # Risk thresholds (0-100). Hard policy always overrides these.
-    max_risk_allow: int = 39
     restrict_risk_threshold: int = 40
     mfa_risk_threshold: int = 60
     block_risk_threshold: int = 80
@@ -63,6 +59,7 @@ class Settings(BaseSettings):
     # Upstream MCP servers
     allow_stdio_servers: bool = True
     upstream_timeout_seconds: float = 45.0
+    scan_on_register: bool = True  # passive vulnerability scan right after a server is added
     upstream_connect_timeout_seconds: float = 90.0
     discovery_interval_seconds: int = 60
     jit_integrity_seconds: int = 15
@@ -75,7 +72,6 @@ class Settings(BaseSettings):
     internal_domains: str = "internal,local,localhost,lan,corp,home.arpa,svc,cluster.local"
     allowed_egress_domains: str = ""
     dlp_redact_outputs: bool = True
-    trust_client_telemetry: bool = False  # demo mode accepts client-supplied runtime telemetry for lab scenarios
 
     # MCP front-end (Claude Desktop bridge / Streamable HTTP endpoint)
     approval_wait_seconds: int = 50
@@ -85,11 +81,7 @@ class Settings(BaseSettings):
     secrets_key_file: str = str(REPO_ROOT / "keys" / "sentinel.key")
     receipt_key_file: str = str(REPO_ROOT / "keys" / "receipt_ed25519.pem")
 
-    sandbox_enabled: bool = False
-    sandbox_image: str = "mcp-sentinel-sandbox:dev"
-    public_registry_url: str = ""
-    public_registry_override_local: bool = True
-    roles: str = "USER,DEVELOPER,SOC_ANALYST,SECURITY_ADMIN,SYSTEM_ADMIN"
+    roles: str = "USER,DEVELOPER,ANALYST,SECURITY_ADMIN,SYSTEM_ADMIN"
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -125,10 +117,6 @@ class Settings(BaseSettings):
         if self.allow_self_approval is None:
             return self.auth_mode == "demo"
         return self.allow_self_approval
-
-    @property
-    def accepts_client_telemetry(self) -> bool:
-        return self.trust_client_telemetry or self.auth_mode == "demo"
 
     @property
     def api_base_url(self) -> str:

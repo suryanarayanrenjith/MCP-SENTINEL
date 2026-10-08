@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from policy.rules import EFFECTS
-from sandbox.manager import SandboxManager
 from sentinel.config import Settings, get_settings
 from sentinel.db import PolicyRuleRow, RuntimeFlagRow
 from sentinel.deps import admin_identity, db_session, reader
@@ -32,12 +31,6 @@ class RuleBody(BaseModel):
 class LockdownBody(BaseModel):
     mode: str
     reason: str = ""
-
-
-class SandboxProbeBody(BaseModel):
-    tool_name: str
-    expected_behavior: dict[str, Any] = Field(default_factory=dict)
-    simulated_observed: dict[str, Any] | None = None
 
 
 def rule_view(r: PolicyRuleRow) -> dict[str, Any]:
@@ -144,10 +137,3 @@ def set_lockdown(body: LockdownBody, session: Session = Depends(db_session), ide
                                     {"reason": body.reason})
     return {"mode": mode}
 
-
-@router.post("/v1/sandbox/probe")
-def sandbox_probe(body: SandboxProbeBody) -> dict[str, Any]:
-    """Standalone expected-vs-observed behaviour comparison (synthetic profiles, no execution)."""
-    expected = body.expected_behavior or {"filesystem": [], "network": [], "process_spawn": False, "environment_access": False}
-    probe = SandboxManager().probe(body.tool_name, expected, body.simulated_observed)
-    return probe.as_dict()

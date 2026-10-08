@@ -141,23 +141,3 @@ class InputValidator:
     def _url_issues(self, url: str) -> list[str]:  # kept for API compatibility
         result = self.validate({}, {"url": url})
         return result.hard_issues
-
-
-class OutputValidator:
-    def validate(self, output: Any, expected_schema: dict[str, Any] | None = None) -> ValidationResult:
-        issues: list[str] = []
-        text = str(output)
-        if expected_schema and isinstance(output, dict):
-            try:
-                validator = Draft202012Validator(expected_schema)
-                issues.extend(f"schema: {e.message}" for e in validator.iter_errors(output))
-            except SchemaError:
-                pass
-        if scan_secrets(text):
-            issues.append("output contains secret-like fields")
-        if re.search(r"ignore (all |any )?previous|disable sentinel|<\s*important\s*>|\bsystem\s*:", text, re.I):
-            issues.append("output contains context-injection content")
-        if re.search(r"https?://(evil|unknown)\.", text, re.I):
-            issues.append("output contains unexpected malicious URL")
-        risk = 0 if not issues else min(8 * len(issues), 24)
-        return ValidationResult(ok=True, issues=issues, risk_delta=risk)

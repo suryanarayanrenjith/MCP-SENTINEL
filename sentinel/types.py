@@ -115,18 +115,10 @@ class DataClass(str, Enum):
 DATA_CLASS_ORDER = [DataClass.PUBLIC, DataClass.INTERNAL, DataClass.CONFIDENTIAL, DataClass.SECRET, DataClass.CRITICAL]
 
 
-class Deviation(str, Enum):
-    NORMAL = "NORMAL"
-    MINOR_DEVIATION = "MINOR_DEVIATION"
-    SUSPICIOUS = "SUSPICIOUS"
-    HIGH_RISK = "HIGH_RISK"
-    CRITICAL = "CRITICAL"
-
-
 class Role(str, Enum):
     USER = "USER"
     DEVELOPER = "DEVELOPER"
-    SOC_ANALYST = "SOC_ANALYST"
+    ANALYST = "ANALYST"
     SECURITY_ADMIN = "SECURITY_ADMIN"
     SYSTEM_ADMIN = "SYSTEM_ADMIN"
 
@@ -177,7 +169,7 @@ ROLE_DEFAULT_CAPABILITIES: dict[str, set[Capability]] = {
         Capability.EXTERNAL_LOOKUP,
         Capability.CODE_EXECUTION,
     },
-    Role.SOC_ANALYST.value: {
+    Role.ANALYST.value: {
         Capability.READ,
         Capability.EXTERNAL_LOOKUP,
         Capability.WRITE,
@@ -226,15 +218,6 @@ class ToolCallRequest(BaseModel):
     agent_id: str | None = None
     destination: str | None = None
     resource: str | None = None
-    observed_runtime: dict[str, Any] | None = None
-
-
-class CapabilityProfile(BaseModel):
-    capability: Capability
-    sensitivity: Sensitivity
-    resource: str = ""
-    network: list[str] = Field(default_factory=list)
-    expected_behavior: dict[str, Any] = Field(default_factory=dict)
 
 
 class RiskFactor(BaseModel):
@@ -268,35 +251,3 @@ class SecurityDecision(BaseModel):
     receipt_id: str | None = None
     restrictions: list[str] = Field(default_factory=list)
     explainability: dict[str, Any] = Field(default_factory=dict)
-
-
-class ToolDefinition(BaseModel):
-    tool_id: str
-    server_id: str
-    tool_name: str
-    version: str
-    schema: dict[str, Any]
-    capabilities: list[Capability]
-    annotations: dict[str, Any] = Field(default_factory=dict)
-    expected_behavior: dict[str, Any] = Field(default_factory=dict)
-    integrity_hash: str
-    sensitivity: Sensitivity
-    trust_status: TrustStatus = TrustStatus.MONITORED
-    implementation_fingerprint: str = ""
-    description: str = ""
-    resource: str = ""
-
-
-class ServerRecord(BaseModel):
-    server_id: str
-    server_name: str
-    publisher: str
-    version: str
-    endpoint: str
-    transport: str = "http"
-    trust_status: TrustStatus = TrustStatus.MONITORED
-    registration_time: datetime = Field(default_factory=utcnow)
-    approved_capabilities: list[Capability] = Field(default_factory=list)
-    integrity_hash: str = ""
-    last_verification_time: datetime | None = None
-    risk_state: RiskBand = RiskBand.MONITOR

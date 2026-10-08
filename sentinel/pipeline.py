@@ -4,7 +4,7 @@ Gated cascade (mirrors the project's zero-trust flow):
 
     identity → agent binding → server trust → tool integrity → semantic change → input
     validation → policy (RBAC, capability, trust, destinations, admin rules, lockdown)
-    → sequential / contextual / data-flow / runtime / behavioural evidence → risk engine
+    → sequential / contextual / data-flow / behavioural evidence → risk engine
     → obligations (MFA step-up, human approval, capability lease) → decision → receipt
 
 Any failing gate returns BLOCK immediately; the risk engine only grades what passed the gates.
@@ -27,12 +27,10 @@ from integrity.crypto import canonical_hash
 from integrity.registry import IntegrityRegistry
 from mfa.stepup import StepUpManager
 from monitoring.baseline import drift_likelihood
-from monitoring.behavior import RuntimeBehaviorAnalyzer
 from policy import rules as policy_rules
 from policy.engine import PolicyEngine
 from risk.engine import Evidence, RiskEngine
 from risk.memory import RiskMemory
-from sandbox.manager import SandboxManager
 from sentinel.config import Settings
 from sentinel.db import ApprovalRow, PolicyRuleRow, RuntimeFlagRow, ToolChangeRow, WorkflowCallRow
 from sentinel.dlp import redact_structure
@@ -48,7 +46,6 @@ from sentinel.types import (
     Capability,
     DataClass,
     Decision,
-    Deviation,
     IdentityContext,
     ReviewState,
     RiskResult,
@@ -60,11 +57,13 @@ from sentinel.types import (
     primary_capability,
     utcnow,
 )
-from sentinel.validation import InputValidator, OutputValidator
+from sentinel.validation import InputValidator
 from workflow.analyzer import SequentialAnalyzer, WorkflowState
 from workflow.context_engine import ContextualEngine
 
 SEVERITY_LIKELIHOOD = {"LOW": 0.03, "MEDIUM": 0.12, "HIGH": 0.3, "CRITICAL": 0.5}
+# vulnerability-scan findings describe the server, not this call: weaker evidence than tool poisoning
+VULN_LIKELIHOOD = {"MEDIUM": 0.04, "HIGH": 0.12, "CRITICAL": 0.25}
 
 
 def arguments_preview(arguments: dict[str, Any], limit: int = 600) -> dict[str, Any]:
@@ -96,14 +95,11 @@ class ControlPlane:
         self.context = ContextualEngine()
         self.inject = InjectionGuard()
         self.inputs = InputValidator(settings.internal_domain_list)
-        self.outputs = OutputValidator()
         self.dataflow = DataFlowGuard(settings.internal_domain_list, settings.allowed_egress_domain_list)
         self.taint = TaintStore(store, settings.workflow_ttl_seconds)
         self.risk = RiskEngine(settings)
         self.memory = RiskMemory(store, settings)
         self.mfa = StepUpManager(store, settings.mfa_ttl_seconds)
-        self.runtime = RuntimeBehaviorAnalyzer()
-        self.sandbox = SandboxManager(settings.sandbox_enabled, settings.sandbox_image)
         self.response = ResponseController(settings)
         self.audit = AuditStore(session)
         self.last_call_id: int | None = None
@@ -212,15 +208,13 @@ class ControlPlane:
                     evidence.append(Evidence("supply_chain", p, f"{level} supply-chain finding on this server", "context", memorable=False))
                     break
 
-        # 6. trusted telemetry only ----------------------------------------------------------------
-        observed = None
-        if request.observed_runtime:
-            if self.settings.accepts_client_telemetry or "sentinel.telemetry" in identity.scopes:
-                observed = request.observed_runtime
-            else:
-                reasons.append("client-supplied runtime telemetry ignored (not a trusted sensor)")
+        vuln = (server.metadata_json or {}).get("vuln_scan") or {}
+        worst_vuln = vuln.get("worst")
+        if worst_vuln in VULN_LIKELIHOOD:
+            evidence.append(Evidence("server_vulnerabilities", VULN_LIKELIHOOD[worst_vuln],
+                                     f"latest vulnerability scan of this server found {worst_vuln} issue(s)", "context", memorable=False))
 
-        # 7. input validation ---------------------------------------------------------------------
+        # 6. input validation ---------------------------------------------------------------------
         iv = self.inputs.validate(tool.schema_json or {}, request.arguments, capabilities=capabilities)
         extra_dest = request.destination if isinstance(request.destination, str) else None
         destinations = list(iv.destinations)
@@ -244,7 +238,7 @@ class ControlPlane:
                                      "arguments contain prompt-injection patterns (possible cross-tool injection relay)", "anomaly"))
             reasons.extend(f"injection:{m}" for m in inj_args.matches[:3])
 
-        # 8. workflow / context --------------------------------------------------------------------
+        # 7. workflow / context --------------------------------------------------------------------
         wf = self._load_workflow(request.workflow_id, request.user_intent, identity.subject)
         lockdown = get_runtime_flag(self.session, "lockdown", "off") or "off"
         rules = self.session.query(PolicyRuleRow).filter(PolicyRuleRow.enabled.is_(True)).all()
@@ -272,7 +266,7 @@ class ControlPlane:
         approval = self._approved(request_hash)
         dest_str = ",".join(d.raw for d in destinations)[:500]
 
-        # 9. policy ---------------------------------------------------------------------------------
+        # 8. policy ---------------------------------------------------------------------------------
         policy = self.policy.evaluate(
             identity=identity,
             server_status=server.trust_status,
@@ -305,7 +299,7 @@ class ControlPlane:
                               primary, impact_caps=capabilities), identity
         gate("policy", "pass", policy.policy_id)
 
-        # 10. sequential / contextual / data-flow / runtime evidence ------------------------------------
+        # 9. sequential / contextual / data-flow / behavioural evidence ----------------------------------
         data_class = self.dataflow.classify(tool.resource or "", primary, flow_roles)
         df = self.dataflow.evaluate(
             workflow=wf, capability=primary, resource=tool.resource or "", destinations=destinations,
@@ -317,7 +311,7 @@ class ControlPlane:
         )
         for name, p, why in seq.signals:
             evidence.append(Evidence(name, p, why, "anomaly"))
-        if seq.signals or "expected" in " ".join(seq.reasons):
+        if seq.signals:
             reasons.extend(r for r in seq.reasons if r not in reasons)
         ctx = self.context.evaluate(identity=identity, request=request, tool=None, workflow=wf, capability=primary, sensitivity=sensitivity)
         for name, p, why in ctx.signals:
@@ -327,11 +321,6 @@ class ControlPlane:
             # structural signals are re-derived on every call; only behavioural ones feed the risk memory
             evidence.append(Evidence(name, p, why, "dataflow", memorable=name not in {"lethal_trifecta", "confidential_transfer"}))
         reasons.extend(r for r in df.reasons if r not in reasons)
-        runtime = self.runtime.evaluate(tool.expected_behavior, observed) if observed else None
-        if runtime is not None and runtime.deviation in {Deviation.SUSPICIOUS, Deviation.HIGH_RISK}:
-            evidence.append(Evidence("runtime", 0.6 if runtime.deviation == Deviation.HIGH_RISK else 0.3,
-                                     runtime.anomalies[0] if runtime.anomalies else "runtime deviation", "runtime"))
-            reasons.extend(runtime.anomalies)
         drift = drift_likelihood(tool.baseline)
         if drift >= 0.05:
             recent = (tool.baseline or {}).get("recent_anomalies") or []
@@ -371,7 +360,7 @@ class ControlPlane:
             "matched_rules": policy.matched_rules,
         }
 
-        # 11. hard data-flow / runtime outcomes --------------------------------------------------------------
+        # 10. hard data-flow outcomes --------------------------------------------------------------------
         if df.block or seq.critical:
             gate("dataflow", "fail", df.reasons[0] if df.reasons else "secret exfiltration")
             if lease:
@@ -383,25 +372,9 @@ class ControlPlane:
                 primary, lease.lease_id if lease else None, explain={**explain_base, "gates": gates},
                 record=(primary, data_class, flow_roles, dest_str, False),
             ), identity
-        if runtime is not None and runtime.deviation == Deviation.CRITICAL:
-            sandbox = self.sandbox.probe(request.tool_name, tool.expected_behavior or {}, observed)
-            evidence.append(Evidence("sandbox", min(0.9, sandbox.risk_score / 50.0), "sandbox evidence: " + sandbox.classification, "runtime"))
-            self.leases.revoke_workflow(request.workflow_id, "runtime compromise")
-            self.leases.revoke_server(server.server_id, "runtime compromise")
-            self.registry.set_tool_status(tool.tool_id, TrustStatus.QUARANTINED)
-            self.registry.set_server_status(server.server_id, TrustStatus.QUARANTINED)
-            self.audit.write_event("runtime_compromise", "CRITICAL", f"{server.server_name}/{tool.tool_name} quarantined: compromised runtime behaviour",
-                                   {"server_id": server.server_id, "tool": tool.tool_name, "anomalies": runtime.anomalies})
-            gate("runtime", "fail", "critical deviation")
-            risk = self.risk.assess(evidence, impact, hard_block=True, hard_reason="compromised runtime behavior", impact_reasons=impact_reasons)
-            return self._finish(
-                request, identity, Decision.BLOCK, risk,
-                reasons + runtime.anomalies + ["runtime compromise: quarantine and block future calls"], "deny.runtime",
-                primary, explain={**explain_base, "gates": gates}, record=(primary, data_class, flow_roles, dest_str, False),
-            ), identity
         gate("dataflow", "warn" if df.signals else "pass", df.reasons[0] if df.reasons else "no sensitive flow")
 
-        # 12. risk + response ---------------------------------------------------------------------------------
+        # 11. risk + response ---------------------------------------------------------------------------------
         risk = self.risk.assess(evidence, impact, impact_reasons=impact_reasons)
         impactful = bool(set(capabilities) - {Capability.READ, Capability.EXTERNAL_LOOKUP})
         decision = self.response.decide(
@@ -460,7 +433,8 @@ class ControlPlane:
                 reasons.append(f"human approval {approval.approval_id[:8]} consumed")
         self.memory.remember(request.workflow_id, evidence)
         if not reasons:
-            reasons.append("all security signals consistent; request is NORMAL")
+            top = [f.reason for f in risk.factors if f.category != "prior" and f.score > 0][:3]
+            reasons.extend(top or [f"all security signals consistent; request is {risk.band.value}"])
 
         restrictions = self.response.restrictions_for(decision)
         finished = self._finish(
@@ -501,14 +475,6 @@ class ControlPlane:
         return finished, identity
 
     # ------------------------------------------------------------------------------------------
-    def inspect_output(self, output: Any) -> list[str]:
-        result = self.outputs.validate(output)
-        inj = self.inject.scan(str(output))
-        issues = list(result.issues)
-        if inj.detected:
-            issues.append("untrusted tool output contains injection patterns")
-        return issues
-
     def _approved(self, request_hash: str) -> ApprovalRow | None:
         now = utcnow()
         rows = (

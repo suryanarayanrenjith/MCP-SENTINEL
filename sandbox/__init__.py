@@ -1,3 +1,1 @@
-from sandbox.manager import SandboxManager
-
-__all__ = ["SandboxManager"]
+"""Honeypot sandbox for local (stdio) MCP servers."""

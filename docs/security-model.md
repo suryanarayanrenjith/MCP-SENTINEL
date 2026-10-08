@@ -26,7 +26,7 @@
 
 ## Least privilege for sensitive capabilities
 
-`SOC_ANALYST` gets READ, EXTERNAL_LOOKUP and WRITE. `DEVELOPER` also gets CODE_EXECUTION. Only administrators get SECRET_ACCESS, DATA_TRANSFER and INFRASTRUCTURE_CONTROL. A sensitive call needs all of the following:
+`ANALYST` gets READ, EXTERNAL_LOOKUP and WRITE (tokens carrying the older `SOC_ANALYST` role name are mapped to it). `DEVELOPER` also gets CODE_EXECUTION. Only administrators get SECRET_ACCESS, DATA_TRANSFER and INFRASTRUCTURE_CONTROL. A sensitive call needs all of the following:
 
 1. a role that includes the capability;
 2. step-up assurance when policy or risk demands it: RFC 6238 TOTP (replay-protected, secret encrypted at rest), IdP `acr`/`amr`, or demo confirmation (demo mode only);
@@ -58,7 +58,7 @@ Secret values are fingerprinted (salted SHA-256, never stored in clear) for tain
 * The API binds to `127.0.0.1`. `TrustedHostMiddleware` rejects unknown Host headers, and `/mcp` rejects foreign Origins. Together these defeat DNS rebinding.
 * Demo tokens are only issued to loopback clients (`SENTINEL_DEMO_TOKEN_LOOPBACK_ONLY`).
 * CORS never allows credentials, and tokens are sent as bearer headers.
-* Client-supplied runtime telemetry is ignored outside demo mode unless `SENTINEL_TRUST_CLIENT_TELEMETRY=true`.
+* Runtime evidence comes only from Sentinel's own sensors (process monitor, honeypot, behavioural baselines). Telemetry fields in client requests are ignored.
 
 ## Production extensions
 

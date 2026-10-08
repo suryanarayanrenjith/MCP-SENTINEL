@@ -2,14 +2,16 @@
 
 ## Verification scope
 
-* The MCP frontend (stdio bridge and `/mcp`) was exercised with scripted JSON-RPC clients: handshake, `tools/list`, calls, held step-up, `list_changed` and live rug pulls. It has **not** been tested inside Claude Desktop itself. Client behaviour can differ in its details, such as progress-notification timeouts and how `open_url` is handled.
+* Upstream compatibility was verified with the official reference servers (Filesystem, Memory, Everything in stdio, Streamable HTTP and SSE modes, Fetch, Git, Time, Sequential Thinking) and with real version updates; see [mcp-servers.md](mcp-servers.md). Remote servers that need an interactive OAuth login are not supported yet.
+* The client side (stdio bridge and `/mcp`) was exercised with scripted JSON-RPC clients that behave like Claude: handshake, `tools/list`, calls with progress tokens, held step-up, `list_changed`. It has **not** been run inside Claude Desktop or Claude Code in our CI. Client behaviour can differ in its details, such as progress-notification timeouts and how `open_url` is handled.
 * Claude Desktop caches its tool list and does not reliably honour `notifications/tools/list_changed`. Servers added after Claude starts can be used straight away through `sentinel_discover_tools` / `sentinel_invoke`; to see them as native tools, toggle the connector or restart Claude.
 * A held step-up call lasts `SENTINEL_WAIT_SECONDS` (50 s by default), which is chosen to stay under typical client request timeouts. If approval comes later, Claude has to call the tool again. The lease is then already in place.
 
 ## Detection limits
 
 * The poisoning scanner and capability inference are heuristics: patterns, a verb lexicon, schema shape. A novel phrasing can evade them, and unusual tool names can be over-classified. Every result is shown with its evidence and can be overridden with a locked profile.
-* TOFU pinning trusts the **first** definition it sees. The honeypot, the scanner and supply-chain checks reduce that risk but cannot remove it. Pre-approved curated profiles are the strongest option.
+* TOFU pinning trusts the **first** definition it sees. The honeypot, the poisoning and vulnerability scanners and the supply-chain checks reduce that risk but cannot remove it. Locking a reviewed capability profile is the strongest option.
+* The vulnerability scanner's active probes only call tools inferred as read-only. Injection flaws reachable only through write tools are not exercised, and TLS checks are skipped behind an HTTPS proxy.
 * Behavioural baselines need at least 5 samples before they flag drift, and a slow, gradual drift can stay under the z-score thresholds.
 * Process and network monitoring uses psutil snapshots taken around each call and every few seconds. Very short-lived processes or connections can be missed, and remote HTTP servers can only be observed through their outputs.
 * The honeypot runs the server as the **same OS user** in a decoy HOME behind a recording proxy. It is a best-effort detector, not a security boundary: a server that ignores `HOME`/proxy variables, or one that delays malicious behaviour, can evade it. Use containers or VMs for real isolation.

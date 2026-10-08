@@ -10,6 +10,9 @@ from jwt import PyJWKClient
 from sentinel.config import Settings
 from sentinel.types import IdentityContext, Role
 
+# Older tokens / IdP realms used SOC_ANALYST for what is now the generic ANALYST role.
+ROLE_ALIASES = {"SOC_ANALYST": "ANALYST"}
+
 
 class IdentityError(Exception):
     def __init__(self, code: str, message: str) -> None:
@@ -126,7 +129,7 @@ class IdentityVerifier:
             direct = [direct]
         out: list[str] = []
         for item in list(realm) + list(resource) + list(direct):
-            name = str(item).upper()
+            name = ROLE_ALIASES.get(str(item).upper(), str(item).upper())
             if name in Role.__members__ or name in self.settings.role_list:
                 if name not in out:
                     out.append(name)

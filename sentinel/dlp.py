@@ -189,19 +189,5 @@ def shannon_entropy(s: str) -> float:
 TOKEN_RE = re.compile(r"[A-Za-z0-9_+/=.@:#$%!^&*-]{8,}")
 
 
-def sensitive_tokens(text: str, *, all_tokens: bool = False, limit: int = 400) -> set[str]:
-    """Tokens worth taint-tracking: DLP hits plus high-entropy strings (or every token for SECRET sources)."""
-    tokens: set[str] = {m.value for m in scan_secrets(text)}
-    for tok in TOKEN_RE.findall(text or ""):
-        tok = tok.strip(".:,;")
-        if len(tok) < 8:
-            continue
-        if all_tokens or (len(tok) >= 12 and shannon_entropy(tok) >= 3.3):
-            tokens.add(tok)
-        if len(tokens) >= limit:
-            break
-    return tokens
-
-
 def fingerprint(token: str, salt: str) -> str:
     return hashlib.sha256((salt + "\x00" + token).encode("utf-8", "ignore")).hexdigest()[:24]

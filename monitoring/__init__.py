@@ -1,3 +1,1 @@
-from monitoring.behavior import RuntimeBehaviorAnalyzer
-
-__all__ = ["RuntimeBehaviorAnalyzer"]
+"""Independent runtime evidence: process/network monitoring and statistical behavioural baselines."""

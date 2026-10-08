@@ -82,3 +82,23 @@ export function safeStorage() {
     return null;
   }
 }
+
+/** Fetch an authenticated file (e.g. a scan report) and either save it or open it in a new tab. */
+export async function fetchFile(path, { filename, open } = {}) {
+  const headers = {};
+  if (currentToken) headers.Authorization = `Bearer ${currentToken}`;
+  const res = await fetch(`${API}${path}`, { headers });
+  if (!res.ok) throw new Error(`${res.status} ${path}`);
+  const url = URL.createObjectURL(await res.blob());
+  if (open) {
+    window.open(url, "_blank", "noopener");
+  } else {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename || "download";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

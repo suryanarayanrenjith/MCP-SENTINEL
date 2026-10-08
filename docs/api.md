@@ -20,7 +20,7 @@ Authentication is `Authorization: Bearer <jwt>`. In demo mode, read-only dashboa
 | GET | `/v1/mcp/catalog/version` | catalogue fingerprint; the bridge polls it and emits `tools/list_changed` |
 | POST | `/v1/mcp/tools/call` | authorise and, if allowed, execute through the output firewall |
 
-`POST /v1/mcp/tools/call` takes `exposed_name` **or** `server_id` + `tool_name`, plus `arguments`, `workflow_id`, `user_intent` and `agent_id`. The `observed_runtime` field is honoured only in demo mode or when `SENTINEL_TRUST_CLIENT_TELEMETRY=true`.
+`POST /v1/mcp/tools/call` takes `exposed_name` **or** `server_id` + `tool_name`, plus `arguments`, `workflow_id`, `user_intent` and `agent_id`. Runtime evidence comes only from Sentinel's own sensors; client-supplied telemetry fields are ignored.
 
 The response contains:
 
@@ -36,9 +36,10 @@ The response contains:
 |---|---|---|
 | GET | `/v1/servers` · `/v1/servers/{id}` | trust registry; the detail view includes masked config, findings, connection status and logs |
 | POST | `/v1/servers` | register a stdio, Streamable HTTP or SSE server (`run_sandbox`, `connect`), then discover and pin it |
-| POST | `/v1/servers/import` | import a `claude_desktop_config.json` `mcpServers` block |
+| POST | `/v1/servers/import` | import a Claude Desktop, Claude Code (`.mcp.json` / `~/.claude.json`, optional `project`), Cursor or VS Code config; `${VAR}` references are expanded |
 | PATCH / DELETE | `/v1/servers/{id}` | edit (enable, slug, config) or remove |
 | POST | `/v1/servers/{id}/discover` | re-list the server now and run the rug-pull analysis |
+| POST | `/v1/servers/{id}/scan` | vulnerability scan `{"active": false}`; the latest grade is shown on the server |
 | POST | `/v1/servers/{id}/sandbox` | run the honeypot sandbox |
 | POST | `/v1/servers/{id}/verify` | legacy synthetic verification probe |
 | PUT | `/v1/servers/{id}/trust` | manual trust status |
@@ -49,6 +50,15 @@ The response contains:
 | GET | `/v1/integrity/changes` · `/{id}` | rug-pull ledger with structured diffs |
 | POST | `/v1/integrity/changes/{id}/resolve` | `{"action": "accept" \| "reject"}` (accept re-pins only while the live definition still matches) |
 | GET | `/v1/integrity/toxic-flows` | toolset-wide lethal-trifecta and toxic-flow analysis with remediation |
+
+## Vulnerability scans
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/v1/scans` | scan a server without registering it (`transport`, `endpoint` or `command`/`args`/`env`, `headers`, `bearer_token`, `active`) |
+| GET | `/v1/scans?server_id=` | scan history (grade, worst severity, counts) |
+| GET | `/v1/scans/{id}` | full report |
+| GET | `/v1/scans/{id}/report.html` · `/report.json` | downloadable reports (`?download=1` for an attachment); HTML is served with a no-script CSP |
 
 ## Step-up and approvals
 
@@ -82,7 +92,6 @@ The response contains:
 | GET | `/v1/policy` | thresholds, role → capability matrix, rules, lockdown |
 | GET / POST / PUT / DELETE | `/v1/policy/rules[/{id}]` | admin rules: `effect` DENY, REQUIRE_MFA or REQUIRE_APPROVAL; `match` on server, tool glob, capabilities, roles |
 | GET / PUT | `/v1/policy/lockdown` | `{"mode": "off" \| "approve_writes" \| "deny_all"}` |
-| POST | `/v1/sandbox/probe` | expected-vs-observed behaviour probe |
 
 ## Misc
 
@@ -91,5 +100,5 @@ The response contains:
 | GET | `/health` | liveness, store backend, version |
 | POST | `/v1/demo/token?role=&subject=&mfa=` | demo JWT (demo mode, loopback clients only) |
 | GET | `/v1/auth/whoami` | identity seen by Sentinel |
-| GET | `/v1/integrations/claude-desktop` | ready-to-paste Claude Desktop, CLI and Claude Code configuration |
+| GET | `/v1/integrations/claude-desktop` | ready-to-paste Claude Desktop and Claude Code configuration and CLI commands |
 | GET | `/v1/integrations/info` | API and dashboard URLs, auth mode, approval wait |

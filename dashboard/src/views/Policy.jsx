@@ -3,7 +3,7 @@ import { api, usePoll } from "../api.js";
 import { Card, Chips, Empty, ErrorNote, Pill } from "../components/ui.jsx";
 
 const CAPS = ["READ", "WRITE", "EXTERNAL_LOOKUP", "SECRET_ACCESS", "DATA_TRANSFER", "INFRASTRUCTURE_CONTROL", "CODE_EXECUTION"];
-const ROLES = ["USER", "DEVELOPER", "SOC_ANALYST", "SECURITY_ADMIN", "SYSTEM_ADMIN"];
+const ROLES = ["USER", "DEVELOPER", "ANALYST", "SECURITY_ADMIN", "SYSTEM_ADMIN"];
 const LOCKDOWN = [
   ["off", "Normal", "risk-adaptive enforcement"],
   ["approve_writes", "Approve writes", "every state-changing call needs a human"],

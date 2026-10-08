@@ -1,7 +1,7 @@
 """Evidence-fusion risk engine: Risk = Likelihood × Impact (NIST SP 800-30 style).
 
 Why not add up points?  The previous additive model saturated: five individually weak
-signals summed past the block threshold, so a perfectly normal ``get_credentials`` in a SOC
+signals summed past the block threshold, so a perfectly normal ``get_credentials`` in an incident
 investigation was hard-blocked instead of stepped-up. Here every security signal is an
 independent piece of *evidence* with a likelihood ``p_i`` that the call is unsafe:
 
@@ -127,11 +127,6 @@ class RiskEngine:
             impact=round(impact, 3),
         )
 
-    def score(self, signals: dict[str, tuple[int, str]], *, hard_block: bool = False, hard_reason: str | None = None) -> RiskResult:
-        """Compatibility shim for legacy integer signals (0-100 each) used by hard-gate denials."""
-        evidence = [Evidence(k, v[0] / 100.0, v[1], "gate") for k, v in signals.items() if v[0] > 0]
-        return self.assess(evidence, 1.0, hard_block=hard_block, hard_reason=hard_reason)
-
     # -- impact ------------------------------------------------------------------------------
     def impact(
         self,
@@ -169,16 +164,3 @@ class RiskEngine:
         p = max(TRUST_PRIOR.get(server_status, 0.1), TRUST_PRIOR.get(tool_status, 0.1))
         worst = server_status if TRUST_PRIOR.get(server_status, 0.1) >= TRUST_PRIOR.get(tool_status, 0.1) else tool_status
         return Evidence("trust_prior", p, f"server/tool trust baseline ({worst})", "prior", memorable=False)
-
-    # kept for API compatibility with the previous engine
-    def capability_signal(self, sensitivity: Sensitivity) -> tuple[int, str]:
-        mapping = {
-            Sensitivity.LOW: (2, "low sensitivity capability"),
-            Sensitivity.MEDIUM: (8, "medium sensitivity capability"),
-            Sensitivity.HIGH: (18, "HIGH sensitivity capability"),
-            Sensitivity.CRITICAL: (28, "CRITICAL capability requested"),
-        }
-        return mapping[sensitivity]
-
-    def trust_signal(self, status: str) -> tuple[int, str]:
-        return int(TRUST_PRIOR.get(status, 0.1) * 100), f"server/tool is {status.lower()}"

@@ -9,10 +9,10 @@ from sentinel.config import get_settings
 
 def test_valid_token():
     settings = get_settings()
-    token = mint_demo_token(settings, roles=["SOC_ANALYST"], scopes=["mcp.invoke"])
+    token = mint_demo_token(settings, roles=["ANALYST"], scopes=["mcp.invoke"])
     ident = IdentityVerifier(settings).verify(f"Bearer {token}")
     assert ident.subject == "user-123"
-    assert "SOC_ANALYST" in ident.roles
+    assert "ANALYST" in ident.roles
     assert ident.token_valid
 
 
@@ -53,4 +53,4 @@ def test_invalid_role_not_trusted_from_request_body():
     settings = get_settings()
     token = mint_demo_token(settings, roles=["NOT_A_ROLE", "SOC_ANALYST"])
     ident = IdentityVerifier(settings).verify(f"Bearer {token}")
-    assert ident.roles == ["SOC_ANALYST"]
+    assert ident.roles == ["ANALYST"]  # legacy role name is mapped to its replacement

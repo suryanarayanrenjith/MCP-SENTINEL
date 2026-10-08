@@ -98,7 +98,7 @@ def test_ssrf_host_classification():
     assert classify_host("0177.0.0.1") == HostClass.LOOPBACK
     assert classify_host("10.1.2.3") == HostClass.PRIVATE
     assert classify_host("::ffff:169.254.169.254") == HostClass.METADATA
-    assert classify_host("soc.attacker.com", ["internal"]) == HostClass.PUBLIC  # no substring tricks
+    assert classify_host("internal.attacker.com", ["internal"]) == HostClass.PUBLIC  # no substring tricks
     assert parse_destination("http://evil.com\\@good.com/").host == "evil.com"  # WHATWG backslash semantics
     dests = extract_destinations({"note": "see https://a.example/x and mail bob@b.example", "nested": [{"url": "localhost:8080"}]})
     assert {d.host for d in dests} == {"a.example", "b.example", "localhost"}
@@ -106,7 +106,7 @@ def test_ssrf_host_classification():
 
 def test_taint_tracking_matches_encoded_secrets():
     taint = TaintStore(StateStore(), 600)
-    taint.add("wf", '{"password": "LAB-vpn-6c1f0a9b2e7d!x"}', source="soc__get_credentials", secret_source=True)
+    taint.add("wf", '{"password": "LAB-vpn-6c1f0a9b2e7d!x"}', source="vault__get_secret", secret_source=True)
     import base64
 
     assert taint.match("wf", {"q": "https://x.example/?d=LAB-vpn-6c1f0a9b2e7d!x"})

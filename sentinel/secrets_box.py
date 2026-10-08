@@ -77,8 +77,3 @@ def mask_mapping(mapping: dict[str, Any] | None) -> dict[str, str]:
         else:
             out[k] = "••••••••"
     return out
-
-
-def reset_cache() -> None:
-    with _lock:
-        _cache.clear()

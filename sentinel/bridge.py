@@ -65,7 +65,8 @@ class ApiClient:
         host = (urlsplit(base).hostname or "").lower()
         loopback = host in {"localhost", "127.0.0.1", "::1"}
         # a corporate HTTP(S)_PROXY must never intercept the local control plane
-        self.http = httpx.Client(timeout=httpx.Timeout(120.0, connect=5.0), trust_env=not loopback)
+        # tool calls may include a first-time `npx`/`uvx` install plus a slow upstream tool
+        self.http = httpx.Client(timeout=httpx.Timeout(300.0, connect=5.0), trust_env=not loopback)
         self._token = os.environ.get("SENTINEL_TOKEN", "").strip()
         self._static = bool(self._token)
         self._exp = 0.0
@@ -133,12 +134,25 @@ class RemoteBackend:
             log(str(exc))
         return self._catalog
 
-    def _call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        return self.api.request(
-            "POST",
-            "/v1/mcp/tools/call",
-            json={"workflow_id": self.workflow.current(), "exposed_name": name, "arguments": arguments, "user_intent": ""},
-        )
+    def _call(self, name: str, arguments: dict[str, Any], ctx: CallContext | None = None) -> dict[str, Any]:
+        """Forward one call; while it runs, keep the client informed with progress notifications."""
+        done = threading.Event()
+
+        def heartbeat() -> None:
+            started = time.time()
+            while not done.wait(5.0):
+                ctx.progress(f"MCP-Sentinel: '{name}' is still running ({int(time.time() - started)}s)…")
+
+        if ctx is not None and ctx.progress_token is not None:
+            threading.Thread(target=heartbeat, name="call-heartbeat", daemon=True).start()
+        try:
+            return self.api.request(
+                "POST",
+                "/v1/mcp/tools/call",
+                json={"workflow_id": self.workflow.current(), "exposed_name": name, "arguments": arguments, "user_intent": ""},
+            )
+        finally:
+            done.set()
 
     def _poll(self, kind: str, ident: str) -> str:
         try:
@@ -149,7 +163,7 @@ class RemoteBackend:
 
     def call_tool(self, name: str, arguments: dict[str, Any], ctx: CallContext) -> dict[str, Any]:
         try:
-            data = self._call(name, arguments)
+            data = self._call(name, arguments, ctx)
         except RuntimeError as exc:
             return text_result(str(exc), True)
         pending = None
@@ -164,7 +178,7 @@ class RemoteBackend:
             )
             if status in {"SATISFIED", "APPROVED"}:
                 try:
-                    data = self._call(name, arguments)  # identical call: action-bound leases match exactly
+                    data = self._call(name, arguments, ctx)  # identical call: action-bound leases match exactly
                 except RuntimeError as exc:
                     return text_result(str(exc), True)
             elif status in {"DENIED", "REJECTED"}:

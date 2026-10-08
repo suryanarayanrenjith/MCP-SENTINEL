@@ -39,6 +39,7 @@ These are MCP attack classes documented in the community catalogue at [awesome-m
 | Token theft without MFA | replayed bearer token | step-up for sensitive actions, TOTP replay protection, action-bound leases |
 | Consent fatigue | approving a vague request | approval page shows the exact tool, argument preview, risk and reasons; the lease is bound to those arguments |
 | Supply-chain update | `npx -y pkg` pulls a new release | unpinned and typosquat findings, honeypot first run, server version drift alert |
+| Misconfigured upstream server | accepts any bearer token, no Origin check, wildcard CORS, OAuth without PKCE, long-lived broad-scope tokens | vulnerability scanner (SecureMCP port) on registration and on demand; findings lower the server's grade and feed risk |
 | Local control-plane attack | malicious site calls `localhost:8443` | loopback bind, Host allowlist, Origin check, loopback-only demo tokens, no CORS credentials |
 | Repudiation | "the agent did it" | hash-chained, Ed25519-signed receipts with identity, agent, gates and factors |
 

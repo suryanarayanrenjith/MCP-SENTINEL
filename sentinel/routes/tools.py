@@ -57,7 +57,6 @@ def tool_view(t: ToolRow, *, detail: bool = False, session: Session | None = Non
         "removed": bool(t.removed),
         "profile_locked": bool(t.profile_locked),
         "flow_roles": t.flow_roles or [],
-        "expected_behavior": t.expected_behavior,
         "resource": t.resource,
         "version": t.version,
         "description": t.description,

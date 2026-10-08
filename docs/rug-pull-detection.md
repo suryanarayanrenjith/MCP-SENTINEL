@@ -81,9 +81,11 @@ The optional **honeypot** starts a local server once in a throw-away HOME that i
 
 ## Try it
 
-```bash
-mcp-sentinel lab   # lab SOC server on :9001
-curl -X POST localhost:9001/admin/rugpull -H 'content-type: application/json' -d '{"enabled": true}'
-```
+**A real supply-chain update.** Register an older release of the official Filesystem server, then bump the pin, as an unpinned `npx -y` would on its next launch:
 
-Within one discovery interval, or immediately on the next sensitive call, *Rug pulls* shows `search_logs` as MALICIOUS: a hidden `<IMPORTANT>` block and a new `context` parameter. `lookup_ip` shows as SUSPICIOUS because its endpoint now points to a "mirror". `soc__search_logs` disappears from Claude's tool list. `{"enabled": false}` restores the clean definitions.
+1. **Servers → Connect server**: command `npx`, args `-y`, `@modelcontextprotocol/server-filesystem@2025.3.28`, `<folder>`.
+2. **Server → Config**: change the version to `@2026.8.31` → **Save & reconnect** (or `PATCH /v1/servers/{id}` with the new `args`).
+
+Sentinel reconnects and diffs the new definitions against the pins: 11 changed tools (SUSPICIOUS where parameters were added or became required, BENIGN for wording) and 3 new tools recorded as additions after the baseline. Changed tools are RESTRICTED and their leases revoked. Claude keeps receiving the pinned text until you accept each change under **Rug pulls**.
+
+**Hidden-instruction rug pull.** `pytest tests/test_rugpull.py -v` runs a real MCP server that starts advertising a poisoned definition mid-session. It shows Sentinel classifying it MALICIOUS, quarantining the tool, restricting the server, blocking the next call, and never serving the new text to the model. It also covers just-in-time re-verification right before a sensitive call.

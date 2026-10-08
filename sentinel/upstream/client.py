@@ -28,10 +28,11 @@ from typing import Any, Callable, Iterable, Iterator
 from urllib.parse import urljoin
 
 import httpx
+from sentinel import __version__
 
 log = logging.getLogger("sentinel.upstream")
 
-CLIENT_INFO = {"name": "mcp-sentinel", "title": "MCP-Sentinel security gateway", "version": "0.2.0"}
+CLIENT_INFO = {"name": "mcp-sentinel", "title": "MCP-Sentinel security gateway", "version": __version__}
 REQUESTED_PROTOCOL = "2025-06-18"
 KNOWN_PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 MAX_TOOL_PAGES = 50
@@ -644,6 +645,15 @@ class LegacySseClient(BaseClient):
             pass
 
 
+def _launch_hint(stderr: str) -> str:
+    """Turn common launcher failures into an actionable message."""
+    if "_npx" in stderr and ("ENOTEMPTY" in stderr or "ERR_MODULE_NOT_FOUND" in stderr):
+        return " — hint: npx's package cache looks corrupted (an interrupted install); delete the ~/.npm/_npx folder and retry"
+    if "command not found" in stderr or "not recognized as an internal or external command" in stderr:
+        return " — hint: the launcher is not on Sentinel's PATH; use an absolute path to npx/uvx/node/python"
+    return ""
+
+
 def connect(
     server_id: str,
     transport: str,
@@ -667,7 +677,7 @@ def connect(
         except Exception as exc:
             tail = " | ".join(client.stderr_tail(5))
             client.close()
-            raise UpstreamError(f"{exc}{' — stderr: ' + tail if tail else ''}") from exc
+            raise UpstreamError(f"{exc}{' — stderr: ' + tail if tail else ''}{_launch_hint(tail)}") from exc
         return client
     url = str(config.get("url") or "")
     if not url.startswith(("http://", "https://")):
