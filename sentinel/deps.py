@@ -72,11 +72,3 @@ def reader(
     if authorization or settings.auth_mode == "oidc":
         return verify(authorization, settings)
     return None
-
-
-def require_admin(cp: ControlPlane, authorization: str | None) -> IdentityContext:
-    """Backward-compatible helper used by older route code."""
-    identity = verify(authorization, cp.settings)
-    if not ADMIN_ROLES & set(identity.roles):
-        raise HTTPException(403, "operation requires SECURITY_ADMIN")
-    return identity

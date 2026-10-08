@@ -73,7 +73,7 @@ export default function Connect({ session, toast }) {
     <div className="stack">
       <div className="page-head"><div>
         <h1>Connect</h1>
-        <p className="muted">Add one MCP server to Claude Desktop — MCP-Sentinel — and every server you connect here appears behind it, risk-gated.</p>
+        <p className="muted">Add one MCP server to Claude Desktop or Claude Code — MCP-Sentinel — and every server you connect here appears behind it, risk-gated.</p>
       </div></div>
       <div className="grid-2">
         <Card title="1 · Claude Desktop" subtitle="Settings → Developer → Edit Config, or let the CLI do it">
@@ -84,7 +84,7 @@ export default function Connect({ session, toast }) {
               <p className="small">Or run (keeps a backup of your config):</p>
               <div className="row gap"><code className="mono small cmd">{c.cli}</code><CopyButton text={c.cli} /></div>
               <p className="small">Move your existing Claude Desktop servers behind Sentinel in one step:</p>
-              <div className="row gap"><code className="mono small cmd">{c.import_cli} --replace</code><CopyButton text={`${c.import_cli} --replace`} /></div>
+              <div className="row gap"><code className="mono small cmd">{c.import_cli}</code><CopyButton text={c.import_cli} /></div>
               <ul className="plain small muted">
                 {Object.entries(c.config_paths).map(([os, path]) => <li key={os}>{os}: <span className="mono">{path}</span></li>)}
               </ul>
@@ -92,12 +92,16 @@ export default function Connect({ session, toast }) {
             </div>
           )}
         </Card>
-        <Card title="2 · Other MCP clients" subtitle="Streamable HTTP endpoint (Claude Code, Cursor, VS Code, MCP Inspector)">
+        <Card title="2 · Claude Code" subtitle="CLI, IDE extensions and the desktop app's Code tab">
           {c && (
             <div className="stack">
-              <div className="row gap"><code className="mono small cmd">{c.streamable_http_url}</code><CopyButton text={c.streamable_http_url} /></div>
+              <p className="small">Let the CLI register the same stdio bridge with Claude Code (uses <span className="mono">claude mcp add-json</span>):</p>
+              <div className="row gap"><code className="mono small cmd">{c.claude_code_cli}</code><CopyButton text={c.claude_code_cli} /></div>
+              <p className="small">Move your existing Claude Code servers (<span className="mono">~/.claude.json</span>, <span className="mono">.mcp.json</span>) behind Sentinel:</p>
+              <div className="row gap"><code className="mono small cmd">{c.claude_code_import_cli}</code><CopyButton text={c.claude_code_import_cli} /></div>
+              <p className="small">Or add it by hand:</p>
               <div className="row gap"><code className="mono small cmd">{c.claude_code}</code><CopyButton text={c.claude_code} /></div>
-              <p className="small muted">Send <span className="mono">Authorization: Bearer &lt;token&gt;</span>. The endpoint validates Origin (DNS-rebinding defence) and is bound to 127.0.0.1 by default.</p>
+              <p className="small muted">Other Streamable-HTTP clients (Cursor, VS Code, MCP Inspector) can use <span className="mono">{c.streamable_http_url}</span> with <span className="mono">Authorization: Bearer &lt;token&gt;</span>; the endpoint validates Origin and is bound to 127.0.0.1 by default.</p>
             </div>
           )}
         </Card>
@@ -109,7 +113,7 @@ export default function Connect({ session, toast }) {
             <div className="row gap wrap">
               <input className="input input-sm" value={subject} onChange={(e) => setSubject(e.target.value)} />
               <select className="input input-sm" value={role} onChange={(e) => setRole(e.target.value)}>
-                {["USER", "DEVELOPER", "SOC_ANALYST", "SECURITY_ADMIN", "SYSTEM_ADMIN"].map((r) => <option key={r}>{r}</option>)}
+                {["USER", "DEVELOPER", "ANALYST", "SECURITY_ADMIN", "SYSTEM_ADMIN"].map((r) => <option key={r}>{r}</option>)}
               </select>
               <button className="btn btn-sm" onClick={() => session.switchTo(subject, role)}>Use demo identity</button>
               <p className="muted small">Demo mode: Claude Desktop's bridge acts as <span className="mono">local-user</span> by default — sign in as the same subject to approve its step-ups.</p>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from identity.tokens import mint_demo_token
+from sentinel import __version__, clientconfig
 from sentinel.config import REPO_ROOT, Settings, get_settings
 from sentinel.deps import current_identity, get_store
 from sentinel.types import IdentityContext
@@ -17,16 +19,16 @@ LOOPBACK_CLIENTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 @router.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "component": "mcp-sentinel", "version": "0.2.0", "store": get_store().backend}
+    return {"status": "ok", "component": "mcp-sentinel", "version": __version__, "store": get_store().backend}
 
 
 @router.post("/v1/demo/token")
 def demo_token(
     request: Request,
-    role: str = "SOC_ANALYST",
+    role: str = "ANALYST",
     subject: str = "user-123",
     mfa: bool = False,
-    agent_id: str = "soc-agent",
+    agent_id: str = "mcp-agent",
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     if settings.auth_mode != "demo":
@@ -53,12 +55,8 @@ def whoami(identity: IdentityContext = Depends(current_identity)) -> dict[str, A
 
 
 def claude_desktop_entry(settings: Settings) -> dict[str, Any]:
-    env = {"SENTINEL_API_URL": settings.api_base_url}
-    if settings.auth_mode == "demo":
-        env.update({"SENTINEL_SUBJECT": "local-user", "SENTINEL_ROLE": "SECURITY_ADMIN"})
-    else:
-        env["SENTINEL_TOKEN"] = "<short-lived user access token from your IdP>"
-    return {"command": sys.executable, "args": ["-m", "sentinel.bridge"], "env": env}
+    token = None if settings.auth_mode == "demo" else "<short-lived user access token from your IdP>"
+    return clientconfig.sentinel_bridge_entry(settings.api_base_url, token=token)
 
 
 @router.get("/v1/integrations/claude-desktop")
@@ -70,17 +68,23 @@ def claude_desktop(settings: Settings = Depends(get_settings)) -> dict[str, Any]
         "Windows": r"%APPDATA%\Claude\claude_desktop_config.json",
         "Linux (unofficial builds)": str(home / ".config" / "Claude" / "claude_desktop_config.json"),
     }
+    code_spec = json.dumps({"type": "stdio", **entry})
     return {
-        "config": {"mcpServers": {"mcp-sentinel": entry}},
+        "config": {"mcpServers": {clientconfig.SENTINEL_ENTRY_NAME: entry}},
         "config_paths": paths,
         "cli": f"{sys.executable} -m sentinel.cli install-claude",
-        "import_cli": f"{sys.executable} -m sentinel.cli import-claude",
-        "claude_code": f"claude mcp add --transport http mcp-sentinel {settings.api_base_url}/mcp --header \"Authorization: Bearer <token>\"",
+        "import_cli": f"{sys.executable} -m sentinel.cli import-claude --replace",
+        "claude_code_cli": f"{sys.executable} -m sentinel.cli install-claude-code",
+        "claude_code_import_cli": f"{sys.executable} -m sentinel.cli import-claude --from code --replace",
+        "claude_code": f"claude mcp add-json --scope user {clientconfig.SENTINEL_ENTRY_NAME} '{code_spec}'",
+        "claude_code_http": f"claude mcp add --transport http {clientconfig.SENTINEL_ENTRY_NAME} {settings.api_base_url}/mcp "
+                            f"--header \"Authorization: Bearer <token>\"",
         "streamable_http_url": f"{settings.api_base_url}/mcp",
         "repo_root": str(REPO_ROOT),
         "notes": [
             "Claude Desktop caches its tool list: after adding servers in Sentinel, toggle the mcp-sentinel connector "
             "off/on (or restart Claude) to see them as native tools; they are usable immediately via sentinel_invoke.",
+            "Claude Code launches the same stdio bridge; run /mcp in Claude Code to reconnect after adding servers.",
             "Keep the API on 127.0.0.1; the bridge talks to it locally.",
         ],
     }

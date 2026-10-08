@@ -238,6 +238,25 @@ class RuntimeFlagRow(Base):
     updated_by: Mapped[str] = mapped_column(String(256), default="")
 
 
+class VulnScanRow(Base):
+    """A vulnerability scan report (SecureMCP-style) for a registered server or an ad-hoc target."""
+
+    __tablename__ = "vuln_scans"
+
+    scan_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    server_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
+    target: Mapped[str] = mapped_column(String(512), default="")
+    name: Mapped[str] = mapped_column(String(256), default="")
+    transport: Mapped[str] = mapped_column(String(16), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    grade: Mapped[str] = mapped_column(String(2), default="")
+    worst: Mapped[str] = mapped_column(String(16), default="NONE")
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    report: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_by: Mapped[str] = mapped_column(String(256), default="")
+
+
 _engine = None
 _Session = None
 

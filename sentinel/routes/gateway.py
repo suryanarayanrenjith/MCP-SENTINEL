@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from identity.verifier import IdentityError, IdentityVerifier
-from sentinel.catalog import SOC_SERVER_ID
 from sentinel.config import Settings, get_settings
 from sentinel.deps import gateway, get_store, reader
 from sentinel.gateway import Gateway
@@ -26,7 +25,7 @@ router = APIRouter()
 
 class CallBody(BaseModel):
     workflow_id: str
-    server_id: str = SOC_SERVER_ID
+    server_id: str = ""
     tool_name: str = ""
     exposed_name: str | None = None
     arguments: dict[str, Any] = Field(default_factory=dict)
@@ -34,7 +33,6 @@ class CallBody(BaseModel):
     agent_id: str | None = None
     destination: str | None = None
     resource: str | None = None
-    observed_runtime: dict[str, Any] | None = None
 
 
 @router.get("/v1/mcp/tools/list")
@@ -61,8 +59,8 @@ def tools_call(
         if row is None:
             raise HTTPException(404, f"unknown tool '{body.exposed_name}'")
         server_id, tool_name = row.server_id, row.tool_name
-    if not tool_name:
-        raise HTTPException(422, "tool_name or exposed_name is required")
+    if not tool_name or not server_id:
+        raise HTTPException(422, "exposed_name, or server_id + tool_name, is required")
     request = ToolCallRequest(
         workflow_id=body.workflow_id,
         server_id=server_id,
@@ -72,7 +70,6 @@ def tools_call(
         agent_id=body.agent_id,
         destination=body.destination,
         resource=body.resource,
-        observed_runtime=body.observed_runtime,
     )
     outcome = gw.call(authorization, request)
     d = outcome.decision

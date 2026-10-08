@@ -15,12 +15,13 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from identity.verifier import IdentityError
 from integrity.discovery import discover_server
 from monitoring.process import classify_children, remote_hosts
+from sentinel import __version__
 from sentinel.config import get_settings
 from sentinel.db import ServerRow, init_db, session_scope
 from sentinel.deps import get_store, set_store
 from sentinel.logging import configure_logging
 from sentinel.receipts import AuditStore
-from sentinel.routes import approvals, audit, core, gateway, policy, servers, tools
+from sentinel.routes import approvals, audit, core, gateway, policy, scans, servers, tools
 from sentinel.seed import seed
 from sentinel.store import StateStore
 from sentinel.types import TrustStatus, worse_trust
@@ -38,7 +39,8 @@ def _discover(server_id: str, reason: str) -> None:
 def _list_servers() -> list[tuple[str, bool]]:
     with session_scope() as session:
         return [
-            (s.server_id, s.enabled is not False and s.managed is not False and s.trust_status != TrustStatus.BLOCKED.value)
+            (s.server_id, s.enabled is not False and s.managed is not False and s.trust_status != TrustStatus.BLOCKED.value
+             and s.discovery_status != "REGISTERING")
             for s in session.query(ServerRow).all()
         ]
 
@@ -104,7 +106,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MCP-Sentinel",
     description="Adaptive Zero-Trust Security Control Plane for Model Context Protocol",
-    version="0.2.0",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -127,7 +129,7 @@ async def identity_error_handler(_request: Request, exc: IdentityError) -> JSONR
     return JSONResponse({"detail": exc.message, "code": exc.code}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
 
 
-for module in (core, gateway, servers, tools, approvals, audit, policy):
+for module in (core, gateway, servers, scans, tools, approvals, audit, policy):
     app.include_router(module.router)
 
 # Backwards-compatible module attribute (older code imported sentinel.app.store)

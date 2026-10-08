@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 TMP = Path(tempfile.mkdtemp(prefix="sentinel-tests-"))
-TEST_DB = TMP / "test_sentinel.db"
-os.environ["SENTINEL_DATABASE_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
+os.environ["SENTINEL_DATABASE_URL"] = f"sqlite:///{(TMP / 'initial.db').as_posix()}"
 os.environ["SENTINEL_AUTH_MODE"] = "demo"
 os.environ["SENTINEL_REDIS_URL"] = ""
 os.environ["SENTINEL_OPA_ENABLED"] = "false"
@@ -17,8 +18,6 @@ os.environ["SENTINEL_BACKGROUND_JOBS_ENABLED"] = "false"
 os.environ["SENTINEL_APPROVAL_WAIT_SECONDS"] = "0"
 os.environ["SENTINEL_SECRETS_KEY_FILE"] = str(TMP / "sentinel.key")
 os.environ["SENTINEL_RECEIPT_KEY_FILE"] = str(TMP / "receipt_ed25519.pem")
-# Nothing listens on the discard port: the lab SOC server is "down" unless a test starts one.
-os.environ["SENTINEL_SOC_ENDPOINT"] = "http://127.0.0.1:9/mcp"
 os.environ["SENTINEL_STATIC_DASHBOARD_DIR"] = str(TMP / "no-dashboard")
 
 import pytest  # noqa: E402
@@ -26,56 +25,81 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from sentinel.config import get_settings  # noqa: E402
 from sentinel.db import reset_engine  # noqa: E402
+from tests.fixtures import mcp_test_server  # noqa: E402
+from tests.helpers import headers  # noqa: E402
 
-
-def _cleanup() -> None:
-    for suffix in ("", "-wal", "-shm"):
-        p = Path(str(TEST_DB) + suffix)
-        if p.exists():
-            p.unlink()
+FIXTURE_SCRIPT = str(Path(mcp_test_server.__file__).resolve())
 
 
 @pytest.fixture(autouse=True)
 def _reset_db():
+    """A brand-new SQLite file per test.
+
+    Re-creating a database at the same path while a previous test's worker thread still holds a
+    connection lets SQLite pick up the old WAL; a fresh path per test isolates tests completely.
+    """
+    from sentinel.upstream.manager import reset_manager
+
+    os.environ["SENTINEL_DATABASE_URL"] = f"sqlite:///{(TMP / f'test-{uuid.uuid4().hex[:12]}.db').as_posix()}"
     get_settings.cache_clear()
+    reset_manager()
     reset_engine()
-    _cleanup()
+    mcp_test_server.STATE.update({"rugpull": False, "compromised": False})
     yield
+    reset_manager()
     reset_engine()
-    _cleanup()
 
 
-@pytest.fixture(scope="session")
-def soc_endpoint() -> str:
-    """The lab SOC MCP server, running for real (Streamable HTTP) on a free local port."""
+def serve_app(app) -> tuple[str, object]:
+    """Run an ASGI app on a free local port; returns (base_url, server)."""
     import socket
     import threading
     import time
 
     import uvicorn
 
-    from mcp_servers.soc_server import app as soc_app
-
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
     sock.close()
-    server = uvicorn.Server(uvicorn.Config(soc_app, host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
     deadline = time.time() + 10
     while not server.started and time.time() < deadline:
         time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}/mcp"
+    return f"http://127.0.0.1:{port}", server
+
+
+@pytest.fixture(scope="session")
+def fixture_endpoint() -> str:
+    """The test MCP server, running for real (Streamable HTTP) on a free local port."""
+    base, server = serve_app(mcp_test_server.build_app())
+    yield f"{base}/mcp"
     server.should_exit = True
 
 
 @pytest.fixture
-def client(_reset_db, soc_endpoint) -> TestClient:
-    from mcp_servers import soc_server
+def app_client(_reset_db) -> TestClient:
+    """Sentinel with an empty registry (what a fresh install looks like)."""
     from sentinel.app import app
 
-    soc_server.STATE.update({"rugpull": False, "compromised": False})
-    os.environ["SENTINEL_SOC_ENDPOINT"] = soc_endpoint
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def client(app_client: TestClient, fixture_endpoint: str) -> TestClient:
+    """Sentinel with the test MCP server registered through the API, exactly like a user would."""
+    resp = app_client.post("/v1/servers", headers=headers("SECURITY_ADMIN", subject="admin"), json={
+        "server_name": "fixture", "transport": "http", "endpoint": fixture_endpoint, "run_sandbox": False,
+    })
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert not (data.get("discovery") or {}).get("error"), data
+    app_client.server_id = data["server_id"]
+    return app_client
+
+
+@pytest.fixture
+def stdio_fixture_config() -> dict:
+    return {"command": sys.executable, "args": [FIXTURE_SCRIPT]}

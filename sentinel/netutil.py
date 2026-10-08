@@ -1,7 +1,7 @@
 """URL / host classification shared by input validation, policy and the data-flow guard.
 
 The previous implementation used substring checks (``"internal" in dest``), which let
-``https://evil.com/?q=internal`` or ``soc.attacker.com`` pass as internal. Everything here
+``https://evil.com/?q=internal`` or ``internal.attacker.com`` pass as internal. Everything here
 parses the host properly, follows WHATWG backslash semantics and understands the
 legacy IPv4 notations (``2130706433``, ``0x7f.1``, ``0177.0.0.1``) used in SSRF bypasses.
 """

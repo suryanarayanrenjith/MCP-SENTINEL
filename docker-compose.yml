@@ -39,15 +39,6 @@ services:
     volumes:
       - ./identity/keycloak:/opt/keycloak/data/import:ro
 
-  soc-mcp:
-    build:
-      context: .
-      dockerfile: docker/soc.Dockerfile
-    environment:
-      SOC_SERVER_COMPROMISED: "false"
-    ports:
-      - "127.0.0.1:9001:9001"
-
   sentinel:
     build:
       context: .
@@ -56,8 +47,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
-      soc-mcp:
         condition: service_started
     environment:
       SENTINEL_AUTH_MODE: demo
@@ -69,7 +58,6 @@ services:
       SENTINEL_JWT_AUDIENCE: mcp-sentinel
       SENTINEL_DEMO_JWT_SECRET: change-me-demo-only-not-for-production
       SENTINEL_CORS_ORIGINS: http://localhost:5173,http://localhost:3000
-      SENTINEL_SOC_ENDPOINT: http://soc-mcp:9001/mcp
       SENTINEL_GATEWAY_HOST: 0.0.0.0
       SENTINEL_PUBLIC_URL: http://localhost:8443
       SENTINEL_DASHBOARD_URL: http://localhost:3000

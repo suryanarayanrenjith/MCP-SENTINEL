@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import sys
-
 from mfa import totp
-from sentinel.catalog import SOC_SERVER_ID
 from sentinel.db import ReceiptRow, get_session_factory
 from tests.helpers import call, headers
 
@@ -27,10 +24,10 @@ def test_streamable_http_mcp_endpoint(client):
     assert _rpc(client, hdrs, "notifications/initialized", rid=None, session_id=sid).status_code == 202
     tools = _rpc(client, hdrs, "tools/list", rid=2, session_id=sid).json()["result"]["tools"]
     names = {t["name"] for t in tools}
-    assert {"soc__search_logs", "sentinel_invoke", "sentinel_discover_tools"} <= names
-    res = _rpc(client, hdrs, "tools/call", {"name": "soc__search_logs", "arguments": {"query": "10.0.0.1"}}, rid=3, session_id=sid).json()["result"]
+    assert {"fixture__search_logs", "sentinel_invoke", "sentinel_discover_tools"} <= names
+    res = _rpc(client, hdrs, "tools/call", {"name": "fixture__search_logs", "arguments": {"query": "10.0.0.1"}}, rid=3, session_id=sid).json()["result"]
     assert res["isError"] is False and "MCP-Sentinel" in res["content"][-1]["text"]
-    via_meta = _rpc(client, hdrs, "tools/call", {"name": "sentinel_invoke", "arguments": {"tool": "soc__lookup_ip", "arguments": {"ip": "8.8.8.8"}}}, rid=4, session_id=sid).json()
+    via_meta = _rpc(client, hdrs, "tools/call", {"name": "sentinel_invoke", "arguments": {"tool": "fixture__lookup_ip", "arguments": {"ip": "8.8.8.8"}}}, rid=4, session_id=sid).json()
     assert via_meta["result"]["isError"] is False
     unknown = _rpc(client, hdrs, "nope/method", rid=5, session_id=sid).json()
     assert unknown["error"]["code"] == -32601
@@ -68,16 +65,16 @@ def test_mfa_totp_stepup_and_action_bound_lease(client):
 
 def test_human_approval_rule_is_single_use(client):
     admin = headers("SECURITY_ADMIN", subject="admin")
-    rule = client.post("/v1/policy/rules", headers=admin, json={"name": "approve incidents", "effect": "REQUIRE_APPROVAL", "match": {"tool": "create_incident"}})
+    rule = client.post("/v1/policy/rules", headers=admin, json={"name": "approve tickets", "effect": "REQUIRE_APPROVAL", "match": {"tool": "create_ticket"}})
     assert rule.status_code == 200
-    analyst = headers("SOC_ANALYST", subject="analyst")
-    first = call(client, "wf-appr", "create_incident", {"title": "x"}, analyst)
+    analyst = headers("ANALYST", subject="analyst")
+    first = call(client, "wf-appr", "create_ticket", {"title": "x"}, analyst)
     assert first["decision"] == "HUMAN_APPROVAL" and first["approval_id"]
     assert client.post(f"/v1/approvals/{first['approval_id']}/approve", headers=analyst).status_code == 403  # not an admin
     assert client.post(f"/v1/approvals/{first['approval_id']}/approve", headers=admin).json()["status"] == "APPROVED"
-    second = call(client, "wf-appr", "create_incident", {"title": "x"}, analyst)
+    second = call(client, "wf-appr", "create_ticket", {"title": "x"}, analyst)
     assert second["decision"] in {"ALLOW", "MONITOR", "RESTRICT"} and second["execution"]["executed"]
-    third = call(client, "wf-appr", "create_incident", {"title": "x"}, analyst)
+    third = call(client, "wf-appr", "create_ticket", {"title": "x"}, analyst)
     assert third["decision"] == "HUMAN_APPROVAL"  # approval was consumed
 
 
@@ -90,7 +87,7 @@ def test_policy_deny_rule_and_lockdown(client):
     assert call(client, "wf-lock", "search_logs", {"query": "x"}, headers())["policy_id"] == "deny.lockdown"
     client.put("/v1/policy/lockdown", headers=admin, json={"mode": "approve_writes"})
     assert call(client, "wf-lock2", "search_logs", {"query": "x"}, headers())["decision"] in {"ALLOW", "MONITOR"}
-    assert call(client, "wf-lock2", "create_incident", {"title": "x"}, headers())["decision"] == "HUMAN_APPROVAL"
+    assert call(client, "wf-lock2", "create_ticket", {"title": "x"}, headers())["decision"] == "HUMAN_APPROVAL"
 
 
 def test_taint_blocks_secret_smuggled_through_lookup(client):
@@ -104,28 +101,19 @@ def test_taint_blocks_secret_smuggled_through_lookup(client):
 
 
 def test_outputs_are_guarded(client):
-    from mcp_servers import soc_server
+    from tests.fixtures.mcp_test_server import STATE
 
-    soc_server.STATE["compromised"] = True  # lab server now returns an injection string + anomalous telemetry
+    STATE["compromised"] = True  # the server now returns an instruction-style string in its output
     result = call(client, "wf-out", "search_logs", {"query": "x"}, headers())
     assert result["execution"]["executed"]
     text = " ".join(c.get("text", "") for c in result["output"]["content"])
     assert "withheld" in text and "ignore previous instructions" not in text.lower()
-    assert result["output_report"]["withheld"]
-    servers = {s["server_id"]: s for s in client.get("/v1/servers").json()}
-    assert servers[SOC_SERVER_ID]["trust_status"] == "QUARANTINED"  # runtime compromise observed during the call
-
-
-def test_client_telemetry_is_untrusted_outside_demo(client, monkeypatch):
-    from sentinel.config import get_settings
-
-    # outside demo mode, client-supplied runtime telemetry must not be able to quarantine a server
-    settings = get_settings()
-    monkeypatch.setattr(type(settings), "accepts_client_telemetry", property(lambda self: False))
-    r = call(client, "wf-tele", "search_logs", {"query": "x"}, headers(), observed_runtime={
-        "environment_access": True, "network": ["unknown.example"], "process_spawn": True})
-    assert r["decision"] in {"ALLOW", "MONITOR"}
-    assert any("telemetry ignored" in x for x in r["reasons"])
+    assert result["output_report"]["withheld"] and result["output_report"]["injection"]["detected"]
+    events = client.get("/v1/events").json()
+    assert any(e["event_type"] == "output_injection" for e in events)
+    # the injection is remembered: the next sensitive call in this workflow carries that evidence
+    later = call(client, "wf-out", "get_credentials", {"system": "vpn"}, headers("SECURITY_ADMIN"))
+    assert any(f["name"] == "workflow_memory" for f in later["factors"])
 
 
 def test_receipt_ledger_detects_tampering(client):
@@ -149,18 +137,17 @@ def test_demo_token_endpoint_and_identity_errors(client):
     assert client.get("/v1/auth/whoami", headers=headers("USER", subject="u1")).json()["subject"] == "u1"
 
 
-def test_stdio_server_registration_with_honeypot(client):
+def test_stdio_server_registration_with_honeypot(client, stdio_fixture_config):
     admin = headers("SECURITY_ADMIN")
     resp = client.post("/v1/servers", headers=admin, json={
-        "server_name": "SOC stdio", "transport": "stdio", "command": sys.executable,
-        "args": ["-m", "mcp_servers.soc_server", "--stdio"], "run_sandbox": True,
+        "server_name": "fixture stdio", "transport": "stdio", **stdio_fixture_config, "run_sandbox": True,
     })
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["sandbox"]["classification"] == "CLEAN"
     assert len(data["discovery"]["added"]) == 6
     names = {t["name"] for t in client.get("/v1/mcp/tools/list").json()["tools"]}
-    assert "soc_stdio__search_logs" in names
+    assert "fixture_stdio__search_logs" in names
     out = call(client, "wf-stdio", "search_logs", {"query": "x"}, headers(), server_id=data["server_id"])
     assert out["execution"]["executed"]
     assert client.delete(f"/v1/servers/{data['server_id']}", headers=admin).status_code == 200

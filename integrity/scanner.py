@@ -49,8 +49,12 @@ PATTERNS: list[tuple[str, str, str, re.Pattern[str]]] = [
      re.compile(r"\b(do\s*n[o']t|never|without)\s+(tell(ing)?|mention(ing)?|inform(ing)?|notify(ing)?|reveal(ing)?|show(ing)?|alert(ing)?|let(ting)?)\b.{0,20}\b(the\s+)?(user|human|operator|them)\b", re.I)),
     ("secrecy_directive", "HIGH", "instructs the model not to disclose something",
      re.compile(r"\b(do\s*n[o']t|never|must\s+not)\s+(tell|mention|inform|notify|reveal|disclose|say|explain|report)\b", re.I)),
-    ("secrecy_directive", "HIGH", "secret / silent operation",
-     re.compile(r"\b(secretly|silently|covertly|quietly|behind the scenes|the user (should|must) not (know|see|be told))\b", re.I)),
+    ("secrecy_directive", "HIGH", "secret / covert operation",
+     re.compile(r"\b(secretly|covertly|behind the (user'?s? )?back|the user (should|must) not (know|see|be told))\b", re.I)),
+    # "silently" alone is common in benign docs ("succeeds silently if the directory exists");
+    # it is a secrecy directive only when it qualifies moving or collecting data.
+    ("secrecy_directive", "HIGH", "silent data action",
+     re.compile(r"\b(silently|quietly)\s+(send|forward|upload|cop(y|ie)|include|attach|add|exfiltrat|transmit|post|share|collect|read|log|record|bcc|cc)\w*\b", re.I)),
     ("approval_bypass", "HIGH", "approval-bypass social engineering",
      re.compile(r"\b(already\s+(been\s+)?approved|pre-?approved|no\s+need\s+to\s+(ask|confirm)|do\s*n[o']t\s+ask\s+(for\s+)?(confirmation|permission)|skip\s+(the\s+)?(confirmation|approval)|bypass\s+(the\s+)?(security|sentinel|approval|guard))\b", re.I)),
     ("sensitive_path", "MEDIUM", "references credential / client-config files",
@@ -208,7 +212,12 @@ def scan_text(text: str, field_name: str, *, other_tool_names: Iterable[str] = (
     for other in other_tool_names:
         if not other or other == own_name or len(other) < 4:
             continue
-        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(other.lower())}(?![A-Za-z0-9_])", lowered):
+        name = re.escape(other.lower())
+        if re.search(r"[_.\-]|[a-z][A-Z]", other):  # identifier-like names: a plain mention is a reference
+            pattern = rf"(?<![A-Za-z0-9_]){name}(?![A-Za-z0-9_])"
+        else:  # plain words ("fetch", "search") only count when explicitly referenced as a tool
+            pattern = rf"[`'\"]{name}[`'\"]|\b{name}\s+tool\b|\btool\s+(named|called)\s+[`'\"]?{name}\b"
+        if re.search(pattern, lowered):
             imperative = re.search(r"\b(when|whenever|always|instead|also|must|before|after)\b", lowered)
             findings.append(Finding(
                 "shadowing", "HIGH" if imperative else "MEDIUM",

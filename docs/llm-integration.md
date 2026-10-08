@@ -1,4 +1,4 @@
-# Connecting Claude Desktop and other clients
+# Connecting Claude Desktop, Claude Code and other clients
 
 MCP-Sentinel is an MCP server for your client and an MCP client for every upstream server. You add **only Sentinel** to your client. Every other server is connected through Sentinel's dashboard or API, and its tools appear in the client as `<server-slug>__<tool>`.
 
@@ -52,7 +52,7 @@ Pass `--config <path>` to use another file. `mcp-sentinel claude-config` prints 
 mcp-sentinel import-claude --replace [--sandbox]
 ```
 
-This registers every other server in your Claude config with Sentinel. The command, arguments and environment are encrypted at rest. Sentinel connects to each server, pins its tools and scans them. `--sandbox` first runs each stdio server in the honeypot. `--replace` then leaves only `mcp-sentinel` in Claude's config, so nothing can reach a tool around Sentinel.
+This registers every other server in your Claude config with Sentinel. The command, arguments and environment are encrypted at rest. Sentinel connects to each server, pins its tools and scans them. `--sandbox` first runs each stdio server in the honeypot. `--replace` then removes every successfully imported server from Claude's config, so nothing can reach those tools around Sentinel. Servers that failed to import stay where they were, so they keep working.
 
 **Add servers later** under *Servers → Connect server* in the dashboard. Presets cover Filesystem, Fetch, Memory and Git, or you can enter any command or URL. Local servers (`npx`, `uvx`, `docker`, `python`, …) run as child processes of the API, with a minimal inherited environment plus the variables you provide. Remote servers can use Streamable HTTP, with automatic fallback to legacy HTTP+SSE.
 
@@ -89,18 +89,39 @@ To see newly added servers as native tools, toggle the `mcp-sentinel` connector 
 
 The bridge writes only MCP messages to stdout, and diagnostics go to stderr. On Windows it forces UTF-8 with `\n` line endings.
 
-## 3. Claude Code, Cursor and other Streamable HTTP clients
+## 3. Claude Code
 
-Sentinel serves MCP Streamable HTTP at `http://127.0.0.1:8443/mcp`. It supports protocol versions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05, `Mcp-Session-Id` sessions, and returns 202 for notifications. The endpoint enforces Origin and Host validation (DNS-rebinding defence) and requires a bearer token:
+Claude Code (CLI, IDE extensions and the desktop app's Code tab) launches the same stdio bridge:
+
+```bash
+mcp-sentinel install-claude-code                 # runs: claude mcp add-json --scope user mcp-sentinel '{"type":"stdio",…}'
+mcp-sentinel install-claude-code --scope project --project .   # or per project (.mcp.json)
+```
+
+If the `claude` CLI is not on PATH, the command prints the exact `claude mcp add-json …` line to run.
+
+Move the servers Claude Code already uses behind Sentinel:
+
+```bash
+mcp-sentinel import-claude --from code --replace [--project /path/to/repo]
+```
+
+This reads user-scope servers from `~/.claude.json`, the project's local-scope servers, and the project's `.mcp.json`. It expands `${VAR}` / `${VAR:-default}` references the way Claude Code does, and reports unresolved ones instead of registering a broken server. Each server is registered with Sentinel. With `--replace`, each successfully imported server is then removed from Claude Code (`claude mcp remove`), so nothing bypasses Sentinel.
+
+Sentinel announces catalogue changes with `notifications/tools/list_changed`. If new tools don't appear, run `/mcp` in Claude Code and reconnect `mcp-sentinel`.
+
+## 4. Cursor, VS Code and other Streamable HTTP clients
+
+Sentinel also serves MCP Streamable HTTP at `http://127.0.0.1:8443/mcp`. It supports protocol versions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05, `Mcp-Session-Id` sessions, and returns 202 for notifications. The endpoint enforces Origin and Host validation (DNS-rebinding defence) and requires a bearer token:
 
 ```bash
 TOKEN=$(mcp-sentinel token --role SECURITY_ADMIN --subject local-user | python -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
-claude mcp add --transport http mcp-sentinel http://127.0.0.1:8443/mcp --header "Authorization: Bearer $TOKEN"
+claude mcp add --transport http mcp-sentinel http://127.0.0.1:8443/mcp --header "Authorization: Bearer $TOKEN"   # also works for Claude Code
 ```
 
-When the client supports URL-mode elicitation, step-up is requested through it. Otherwise the call is held open while the dashboard's approval inbox pops up.
+Demo tokens expire after an hour, so the stdio bridge (which renews them) is the better choice for daily use. When the client supports URL-mode elicitation, step-up is requested through it. Otherwise the call is held open while the dashboard's approval inbox pops up.
 
-## 4. Your own agent or application (REST)
+## 5. Your own agent or application (REST)
 
 Applications that run their own tool loop, for example with any LLM provider's function calling, can use the REST policy gateway directly:
 
@@ -121,6 +142,6 @@ You can also pass `server_id` + `tool_name` instead of `exposed_name`. The respo
 
 Treat the decision as authoritative. Map each tool name your model can call to a **fixed** server/tool pair, and never let model output choose server ids or endpoints. Keep tokens and upstream credentials server-side.
 
-## 5. Production identity
+## 6. Production identity
 
-Set `SENTINEL_AUTH_MODE=oidc` with `SENTINEL_JWT_ISSUER`, `SENTINEL_JWT_AUDIENCE` and `SENTINEL_OIDC_JWKS_URL` (or `SENTINEL_OIDC_INTROSPECT_URL`). A Keycloak realm is included in `identity/keycloak/`. HS* algorithms are rejected in OIDC mode, demo tokens and demo confirmation are disabled, and step-up uses TOTP or the IdP's MFA claims (`acr`/`amr`). Give the bridge a short-lived user token through `SENTINEL_TOKEN`, and never put it in prompts or commit it.
+Set `SENTINEL_AUTH_MODE=oidc` with `SENTINEL_JWT_ISSUER`, `SENTINEL_JWT_AUDIENCE` and `SENTINEL_OIDC_JWKS_URL`. A Keycloak realm is included in `identity/keycloak/`. HS* algorithms are rejected in OIDC mode, demo tokens and demo confirmation are disabled, and step-up uses TOTP or the IdP's MFA claims (`acr`/`amr`). Give the bridge a short-lived user token through `SENTINEL_TOKEN`, and never put it in prompts or commit it.

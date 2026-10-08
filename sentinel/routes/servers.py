@@ -13,6 +13,7 @@ from integrity.crypto import canonical_hash
 from integrity.discovery import discover_server, server_findings
 from integrity.registry import unique_slug
 from sandbox.honeypot import run_honeypot
+from sentinel import clientconfig
 from sentinel.config import Settings, get_settings
 from sentinel.db import LeaseRow, ServerRow, ToolChangeRow, ToolRow
 from sentinel.deps import admin_identity, db_session, reader
@@ -23,9 +24,6 @@ from sentinel.types import TrustStatus, utcnow, worse_trust
 from sentinel.upstream import get_manager
 
 router = APIRouter()
-
-SELF_MARKERS = ("sentinel.bridge", "sentinel_mcp_adapter", "mcp-sentinel-bridge")
-
 
 class RegisterServerBody(BaseModel):
     server_name: str
@@ -71,6 +69,7 @@ class ImportBody(BaseModel):
     config: dict[str, Any] | str
     connect: bool = True
     run_sandbox: bool = False
+    project: str = ""  # Claude Code: also import this project's local-scope servers from ~/.claude.json
 
 
 def _display_endpoint(transport: str, config: dict[str, Any]) -> str:
@@ -109,8 +108,8 @@ def server_view(row: ServerRow, session: Session, *, detail: bool = False) -> di
         "tool_count": len(tools),
         "tools_at_risk": sum(1 for t in tools if t.trust_status in {"RESTRICTED", "QUARANTINED", "BLOCKED"} or t.review_state in {"CHANGED", "PENDING_REVIEW"}),
         "description": meta.get("description", ""),
-        "lab": bool(meta.get("lab")),
         "sandbox_classification": (meta.get("sandbox_report") or {}).get("classification"),
+        "vuln_scan": meta.get("vuln_scan"),
         "auth_scheme": meta.get("auth_scheme", "none"),
         "auth_audience": meta.get("auth_audience", ""),
         "auth_scopes": meta.get("auth_scopes", []),
@@ -211,7 +210,9 @@ def register(session: Session, settings: Settings, body: RegisterServerBody, reg
         enabled=True,
         managed=True,
         config_encrypted=encrypt_json(config),
-        discovery_status="NEVER",
+        # the background discovery loop skips servers that are still being registered: launching
+        # the same `npx`/`uvx` package twice at once corrupts the package manager's cache
+        discovery_status="REGISTERING",
         findings=[],
     )
     session.add(row)
@@ -228,9 +229,26 @@ def register(session: Session, settings: Settings, body: RegisterServerBody, reg
         sandbox = run_honeypot(server_id, config, timeout=settings.upstream_connect_timeout_seconds)
         _apply_sandbox(session, row, sandbox)
     discovery = None
-    if body.connect and row.trust_status != TrustStatus.QUARANTINED.value:
-        discovery = discover_server(session, server_id, "initial discovery")
+    try:
+        if body.connect and row.trust_status != TrustStatus.QUARANTINED.value:
+            discovery = discover_server(session, server_id, "initial discovery")
+            session.refresh(row)
+    except Exception as exc:  # the server stays registered; the background loop retries discovery
+        session.rollback()
+        discovery = {"server_id": server_id, "error": f"discovery failed: {str(exc)[:300]}"}
         session.refresh(row)
+    finally:
+        if row.discovery_status == "REGISTERING":
+            row.discovery_status = "NEVER"
+            session.commit()
+    scan = None
+    if settings.scan_on_register and discovery and not discovery.get("error"):
+        from sentinel.routes.scans import run_server_scan, scan_view
+
+        try:
+            scan = scan_view(run_server_scan(session, row, active=False, by=registered_by, settings=settings))
+        except Exception as exc:  # a scan problem never blocks registration
+            scan = {"error": str(exc)[:300]}
     return {
         "server_id": server_id,
         "slug": row.slug,
@@ -243,6 +261,7 @@ def register(session: Session, settings: Settings, body: RegisterServerBody, reg
         "auth_scopes": body.auth_scopes,
         "sandbox": sandbox,
         "discovery": discovery,
+        "scan": scan,
         "message": f"Server '{row.server_name}' registered" + (" and connected." if discovery and not discovery.get("error") else "."),
     }
 
@@ -278,42 +297,38 @@ def import_servers(
     settings: Settings = Depends(get_settings),
     identity=Depends(admin_identity),
 ) -> dict[str, Any]:
-    """Import servers from a Claude Desktop / Cursor / VS Code style ``mcpServers`` config."""
+    """Import servers from a Claude Desktop, Claude Code (``~/.claude.json`` / ``.mcp.json``), Cursor or
+    VS Code MCP configuration. ``${VAR}`` references are expanded from Sentinel's environment."""
     config = body.config
     if isinstance(config, str):
         try:
             config = json.loads(config)
         except ValueError as exc:
             raise HTTPException(422, f"config is not valid JSON: {exc}") from exc
-    entries = (config or {}).get("mcpServers") or (config or {}).get("servers") or {}
-    if not isinstance(entries, dict) or not entries:
-        raise HTTPException(422, "expected an object with an 'mcpServers' map")
-    results = []
+    if not isinstance(config, dict):
+        raise HTTPException(422, "expected a JSON object")
+    raw_entries = (config.get("mcpServers") or config.get("servers") or {}) if isinstance(config, dict) else {}
+    entries = clientconfig.extract_servers(config, project=body.project or None)
+    if not entries and not raw_entries:
+        raise HTTPException(422, "expected an object with an 'mcpServers' (or VS Code 'servers') map")
+    results = [{"name": n, "skipped": "this is MCP-Sentinel itself"} for n in raw_entries if n not in entries]
     for name, spec in entries.items():
-        if not isinstance(spec, dict):
-            continue
-        blob = json.dumps(spec)
-        if any(m in blob for m in SELF_MARKERS) or name.lower() in {"mcp-sentinel", "sentinel"}:
-            results.append({"name": name, "skipped": "this is MCP-Sentinel itself"})
-            continue
         if spec.get("disabled"):
             results.append({"name": name, "skipped": "disabled in the source config"})
             continue
-        if spec.get("command"):
-            reg = RegisterServerBody(server_name=name, transport="stdio", command=str(spec["command"]),
-                                     args=[str(a) for a in spec.get("args") or []], env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
-                                     cwd=str(spec.get("cwd") or ""), run_sandbox=body.run_sandbox, connect=body.connect, publisher="imported")
-        elif spec.get("url") or spec.get("serverUrl"):
-            kind = str(spec.get("type") or spec.get("transport") or "http").lower()
-            reg = RegisterServerBody(server_name=name, transport="sse" if kind == "sse" else "http",
-                                     endpoint=str(spec.get("url") or spec.get("serverUrl")),
-                                     headers={str(k): str(v) for k, v in (spec.get("headers") or {}).items()},
-                                     run_sandbox=False, connect=body.connect, publisher="imported")
-        else:
+        spec = clientconfig.expand_env(spec)
+        missing = clientconfig.unresolved_refs(spec)
+        if missing:
+            results.append({"name": name, "error": "unresolved variables: " + ", ".join(missing)})
+            continue
+        reg = clientconfig.to_registration(name, spec)
+        if reg is None:
             results.append({"name": name, "skipped": "unrecognised server entry"})
             continue
+        body_in = RegisterServerBody(**reg, connect=body.connect, publisher="imported",
+                                     run_sandbox=body.run_sandbox and reg["transport"] == "stdio")
         try:
-            out = register(session, settings, reg, identity.subject)
+            out = register(session, settings, body_in, identity.subject)
             results.append({"name": name, "server_id": out["server_id"], "trust_status": out["trust_status"],
                             "tools": len((out.get("discovery") or {}).get("added") or []),
                             "error": (out.get("discovery") or {}).get("error")})

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from typing import Any
 
@@ -25,9 +26,8 @@ from sqlalchemy.orm import Session
 from integrity import rugpull, scanner
 from integrity.capabilities import Inference, infer
 from integrity.crypto import canonical_hash, canonical_json
-from integrity.registry import exposed_name_for, slugify
+from integrity.registry import disambiguate_exposed_names, exposed_name_for, slugify
 from integrity.supplychain import analyze_http, analyze_stdio
-from sentinel.catalog import curated_profile
 from sentinel.config import get_settings
 from sentinel.db import ServerRow, ToolChangeRow, ToolRow
 from sentinel.leases import CapabilityLeaseManager
@@ -53,12 +53,10 @@ def _json_safe(value: Any) -> Any:
 
 def _profiled(server: ServerRow, row: ToolRow | None, wire: dict[str, Any]) -> tuple[Inference, Inference]:
     """(raw, profiled) inference. Raw semantics are compared across versions (apples to apples);
-    the profiled view applies an administrator-locked or curated capability profile."""
+    the profiled view applies an administrator-locked capability profile."""
     raw = infer(wire, server_transport=server.transport or "http")
     profiled = infer(wire, server_transport=server.transport or "http")
-    profile = curated_profile(server.server_id, str(wire.get("name") or ""))
-    locked = (row.inference or {}).get("locked") if row is not None and row.profile_locked else None
-    override = locked or profile
+    override = (row.inference or {}).get("locked") if row is not None and row.profile_locked else None
     if override:
         profiled.capabilities = sorted(
             {Capability(c) for c in override.get("capabilities") or []} or set(raw.capabilities),
@@ -66,8 +64,8 @@ def _profiled(server: ServerRow, row: ToolRow | None, wire: dict[str, Any]) -> t
         )
         profiled.sensitivity = Sensitivity(override.get("sensitivity") or raw.sensitivity.value)
         profiled.resource = override.get("resource") or raw.resource
-        profiled.evidence.insert(0, "capability profile locked by administrator / curated catalog")
-        profiled.confidence = "curated"
+        profiled.evidence.insert(0, "capability profile locked by an administrator")
+        profiled.confidence = "locked"
     return raw, profiled
 
 
@@ -151,7 +149,8 @@ def apply_tool_list(
     if not server.slug:
         server.slug = slug
     existing = {r.tool_name: r for r in session.query(ToolRow).filter(ToolRow.server_id == server.server_id).all()}
-    others = _other_tool_names(session, server.server_id)
+    own_names = {str(t.get("name") or "") for t in tools if isinstance(t, dict)}
+    others = [n for n in _other_tool_names(session, server.server_id) if n not in own_names]
     summary: dict[str, Any] = {"server_id": server.server_id, "reason": reason, "added": [], "changed": [], "removed": [],
                                "unchanged": 0, "alerts": []}
     seen: set[str] = set()
@@ -187,9 +186,8 @@ def apply_tool_list(
                 row.trust_status = TrustStatus.RESTRICTED.value if verdict == "SUSPICIOUS" else TrustStatus.MONITORED.value
                 row.approved_definition, row.approved_hash = {}, ""
             else:
-                curated = curated_profile(server.server_id, name)
                 row.review_state = ReviewState.APPROVED.value
-                row.trust_status = TrustStatus.TRUSTED.value if curated else TrustStatus.MONITORED.value
+                row.trust_status = TrustStatus.MONITORED.value  # trusted only after an admin verifies the server
                 row.approved_definition, row.approved_hash = wire, live_hash  # trust on first use
             caps, sens = _authorization_profile(live_inf, None)
             _apply_live(row, wire, live_hash, live_inf, live_scan, slug, caps, sens, server)
@@ -304,6 +302,9 @@ def apply_tool_list(
                {"server_id": server.server_id, "tool": name})
         summary["removed"].append(name)
 
+    disambiguate_exposed_names(
+        [r for r in session.query(ToolRow).filter(ToolRow.server_id == server.server_id).all()], slug
+    )
     _reconcile_server(session, server, info, summary)
     session.commit()
     return summary
@@ -347,9 +348,6 @@ def _apply_live(
         row.flow_roles = data["flow_roles"]
         if not row.resource or not row.profile_locked:
             row.resource = inference.resource
-    profile = curated_profile(server.server_id, row.tool_name)
-    if profile and not row.expected_behavior:
-        row.expected_behavior = profile["expected_behavior"]
 
 
 def _reconcile_server(session: Session, server: ServerRow, info: dict[str, Any], summary: dict[str, Any]) -> None:
@@ -397,7 +395,33 @@ def _reconcile_server(session: Session, server: ServerRow, info: dict[str, Any],
         server.risk_state = "NORMAL"
 
 
+_discovery_locks: dict[str, threading.Lock] = {}
+_discovery_locks_guard = threading.Lock()
+
+
+def _discovery_lock(server_id: str) -> threading.Lock:
+    with _discovery_locks_guard:
+        return _discovery_locks.setdefault(server_id, threading.Lock())
+
+
 def discover_server(session: Session, server_id: str, reason: str = "manual", manager: Any = None) -> dict[str, Any]:
+    """List the server's tools and reconcile them with the pins.
+
+    Discoveries of the same server are serialised: registration, the background loop
+    (schedule or ``tools/list_changed``), just-in-time checks and manual re-checks can
+    otherwise race and pin the same new tool twice.
+    """
+    lock = _discovery_lock(server_id)
+    if not lock.acquire(timeout=180):
+        return {"server_id": server_id, "error": "another discovery of this server is still running"}
+    try:
+        session.expire_all()  # another discovery may have just committed newer state
+        return _discover_locked(session, server_id, reason, manager)
+    finally:
+        lock.release()
+
+
+def _discover_locked(session: Session, server_id: str, reason: str, manager: Any) -> dict[str, Any]:
     from sentinel.upstream import get_manager
 
     server = session.get(ServerRow, server_id)

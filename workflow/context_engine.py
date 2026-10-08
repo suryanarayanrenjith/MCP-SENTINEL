@@ -44,12 +44,7 @@ class ContextualEngine:
         intent = (request.user_intent or workflow.intent or "").strip().lower()
         if intent not in GENERIC_INTENTS and capability in INTENT_KEYWORDS and capability != Capability.WRITE:
             if not any(k in intent for k in INTENT_KEYWORDS[capability]):
-                why = (
-                    "critical capability is not implied by investigation-only user intent"
-                    if ("investigate" in intent or "suspicious" in intent)
-                    else f"{capability.value} is not implied by the declared intent"
-                )
-                signals.append(("intent_mismatch", 0.30, why))
+                signals.append(("intent_mismatch", 0.30, f"{capability.value} is not implied by the declared user intent"))
         sens = sensitivity or getattr(tool, "sensitivity", None)
         if sens is not None and Sensitivity(sens) in {Sensitivity.HIGH, Sensitivity.CRITICAL} and identity.agent_id in {"", "unknown-agent"}:
             signals.append(("unknown_agent", 0.10, "high-sensitivity action from an unidentified agent"))

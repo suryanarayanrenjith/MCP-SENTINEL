@@ -69,21 +69,21 @@ Zero trust re-evaluates continuously, so suspicion carries over between calls. A
 
 Each factor's displayed contribution is its share of `−ln(1 − pᵢ)`. The contributions add up to the final score, so the dashboard can draw an additive waterfall. Every receipt stores the factors, `likelihood`, `impact`, `impact_reasons` and the full gate trace.
 
-### Worked example (from `python -m sentinel.demo`, scenario 2)
+### Worked example
 
-`soc__get_credentials` runs right after `soc__lookup_ip` in a workflow whose intent is "Investigate suspicious activity…":
+A trusted server's SECRET_ACCESS tool (for example `vault__get_secret`) runs right after an EXTERNAL_LOOKUP tool (for example `fetch__fetch`). The workflow's declared intent was an investigation, and the user has no MFA context:
 
 | Factor | p | Contribution |
 |---|---|---|
 | sequence_transition: EXTERNAL_LOOKUP → SECRET_ACCESS | 0.35 | 23 |
-| intent_mismatch: a critical capability does not follow from an investigation-only intent | 0.30 | 19 |
+| intent_mismatch: SECRET_ACCESS is not implied by the declared user intent | 0.30 | 19 |
 | authn_assurance: no MFA context | 0.25 | 16 |
 | privilege_escalation: monotonic escalation | 0.15 | 9 |
 | trust_prior: TRUSTED | 0.02 | 1 |
 
 L = 1 − (0.65 · 0.70 · 0.75 · 0.85 · 0.98) = **0.7157**. Impact = **0.9** (SECRET_ACCESS, SECRET data). R = 100 · 0.7157 · (0.5 + 0.5 · 0.9) = **68**, which is HIGH, so the decision is **MFA_REQUIRED**.
 
-After a TOTP step-up, `authn_assurance` disappears and the score drops to **59** (SUSPICIOUS). The call executes as **RESTRICT**, so the returned secret is redacted. The following `send_data` to an external URL is a hard data-flow **BLOCK** (100).
+After a TOTP step-up, `authn_assurance` disappears and the score drops to **59** (SUSPICIOUS). The call executes as **RESTRICT**, so the returned secret is redacted. Any later attempt to send that secret to an external destination is a hard data-flow **BLOCK**.
 
 ## Swapping the model
 

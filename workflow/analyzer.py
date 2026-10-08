@@ -17,9 +17,6 @@ SUSPICIOUS_TRANSITIONS: dict[tuple[Capability, Capability], tuple[float, str]] =
     (Capability.EXTERNAL_LOOKUP, Capability.INFRASTRUCTURE_CONTROL): (0.30, "infrastructure control right after ingesting external content"),
 }
 
-# Kept for backwards compatibility with code that imported these names.
-CRITICAL_TRANSITIONS = {(Capability.SECRET_ACCESS, Capability.DATA_TRANSFER)}
-
 ESCALATION_ORDER = [
     Capability.READ, Capability.EXTERNAL_LOOKUP, Capability.WRITE, Capability.DATA_TRANSFER,
     Capability.SECRET_ACCESS, Capability.INFRASTRUCTURE_CONTROL, Capability.CODE_EXECUTION,
@@ -106,12 +103,7 @@ class SequentialAnalyzer:
         if state.recent_calls_last_minute >= velocity_limit:
             signals.append(("velocity", 0.25, f"{state.recent_calls_last_minute} calls in the last minute (automation burst)"))
 
-        sequence = state.tools + [next_tool]
-        reasons = [s[2] for s in signals]
-        if not reasons:
-            reasons.append(
-                "sequence matches expected SOC investigation pattern" if self._looks_normal(sequence) else "no suspicious transition detected"
-            )
+        reasons = [s[2] for s in signals] or ["no suspicious capability transition in this workflow"]
         remaining = 1.0
         for _, p, _ in signals:
             remaining *= 1.0 - p
@@ -123,11 +115,3 @@ class SequentialAnalyzer:
             likelihood=likelihood,
             signals=signals,
         )
-
-    def _looks_normal(self, sequence: list[str]) -> bool:
-        allowed = [
-            ["search_logs"],
-            ["search_logs", "lookup_ip"],
-            ["search_logs", "lookup_ip", "create_incident"],
-        ]
-        return sequence in allowed

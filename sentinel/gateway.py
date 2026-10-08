@@ -24,7 +24,6 @@ from sqlalchemy.orm import Session
 from integrity.discovery import discover_server
 from integrity.registry import is_exposed, served_definition
 from monitoring import baseline as behavior_baseline
-from monitoring.behavior import RuntimeBehaviorAnalyzer
 from risk.engine import Evidence
 from sentinel.config import Settings
 from sentinel.db import ServerRow, ToolRow, WorkflowCallRow
@@ -38,7 +37,6 @@ from sentinel.types import (
     Capability,
     DataClass,
     Decision,
-    Deviation,
     IdentityContext,
     SecurityDecision,
     ToolCallRequest,
@@ -126,7 +124,6 @@ class Gateway:
         self.manager = manager or get_manager()
         self.cp = ControlPlane(session, store, settings)
         self.inject = InjectionGuard()
-        self.runtime = RuntimeBehaviorAnalyzer()
 
     # -- catalog -------------------------------------------------------------------------------
     def exposed_tools(self) -> list[tuple[ToolRow, ServerRow]]:
@@ -149,7 +146,7 @@ class Gateway:
                 "name": row.exposed_name or row.tool_name,
                 "title": served.get("title") or (served.get("annotations") or {}).get("title") or row.tool_name,
                 "description": (description + ("\n\n" + note if note else "")).strip(),
-                "inputSchema": served.get("inputSchema") or {"type": "object"},
+                "inputSchema": client_input_schema(served.get("inputSchema")),
                 "server_id": row.server_id,
                 "tool_name": row.tool_name,
                 "exposed_name": row.exposed_name or row.tool_name,
@@ -174,11 +171,13 @@ class Gateway:
         return canonical_hash([(t["name"], t["description"], t["inputSchema"]) for t in self.catalog()])[:16]
 
     def resolve(self, exposed_name: str) -> ToolRow | None:
-        row = self.session.query(ToolRow).filter(ToolRow.exposed_name == exposed_name).first()
-        if row is None:  # fall back to a unique bare tool name (older clients)
+        rows = self.session.query(ToolRow).filter(ToolRow.exposed_name == exposed_name).all()
+        if not rows:  # fall back to a unique bare tool name (older clients)
             rows = self.session.query(ToolRow).filter(ToolRow.tool_name == exposed_name).all()
-            row = rows[0] if len(rows) == 1 else None
-        return row
+            if len({r.server_id for r in rows}) != 1:
+                return None
+        rows.sort(key=lambda r: bool(r.removed))  # a live tool wins over a removed one with the same name
+        return rows[0] if rows else None
 
     # -- integrity -----------------------------------------------------------------------------
     def jit_verify(self, server: ServerRow, tool: ToolRow | None = None) -> None:
@@ -317,12 +316,6 @@ class Gateway:
         injection = self.inject.scan(joined[:200_000], field_name="tool_output")
         is_error = bool(result.get("isError"))
 
-        # lab sensor: the SOC lab server reports simulated runtime telemetry in its output
-        lab_runtime = None
-        if (server.metadata_json or {}).get("lab") and isinstance(result.get("structuredContent"), dict):
-            lab_runtime = result["structuredContent"].get("observed_runtime")
-        runtime_finding = self.runtime.evaluate(tool.expected_behavior, lab_runtime) if lab_runtime and self.settings.accepts_client_telemetry else None
-
         # behavioural baseline (independently observed)
         proc = (outcome.telemetry or {}).get("process") or {}
         keys = sorted(structured.keys()) if isinstance(structured, dict) else _json_keys(texts)
@@ -342,11 +335,6 @@ class Gateway:
         withhold_reasons: list[str] = []
         severe = [m for s, m in anomalies if s in {"HIGH", "CRITICAL"}]
         process_severe = [m for m in severe if "process" in m or "remote host" in m]
-        if runtime_finding is not None and runtime_finding.deviation == Deviation.CRITICAL:
-            tool.trust_status = TrustStatus.QUARANTINED.value
-            server.trust_status = TrustStatus.QUARANTINED.value
-            self.cp.leases.revoke_server(server.server_id, "compromised runtime behaviour observed during execution")
-            withhold_reasons.append("tool exhibited compromised runtime behaviour during this call: " + "; ".join(runtime_finding.anomalies[:3]))
         if process_severe:
             tool.trust_status = worse_trust(tool.trust_status, TrustStatus.RESTRICTED.value)
             withhold_reasons.append("; ".join(process_severe))
@@ -406,8 +394,22 @@ class Gateway:
             "injection": {"detected": injection.detected, "severity": injection.severity, "matches": injection.matches[:5]},
             "behavior_anomalies": [{"severity": s, "message": m} for s, m in anomalies],
             "withheld": quarantine_output,
-            "runtime": runtime_finding.anomalies if runtime_finding else [],
         })
+
+
+def client_input_schema(schema: Any) -> dict[str, Any]:
+    """A JSON Schema every MCP client accepts: clients (and the Claude API) require a top-level
+    ``type: object``; some servers omit it or send ``properties`` as null."""
+    if not isinstance(schema, dict):
+        return {"type": "object", "properties": {}}
+    out = dict(schema)
+    if out.get("type") != "object":
+        out["type"] = "object"
+    if not isinstance(out.get("properties"), dict):
+        out["properties"] = {}
+    if "required" in out and not isinstance(out["required"], list):
+        out.pop("required")
+    return out
 
 
 def _json_keys(texts: list[str]) -> list[str]:

@@ -137,7 +137,3 @@ export function TrifectaDots({ t }) {
     </span>
   );
 }
-
-export function riskTone(score) {
-  return severityTone(score);
-}

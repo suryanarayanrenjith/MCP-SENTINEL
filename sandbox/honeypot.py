@@ -30,7 +30,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from integrity import scanner
 from integrity.capabilities import infer
@@ -197,7 +197,19 @@ def _synthetic_args(schema: dict[str, Any], home: Path) -> dict[str, Any]:
     return args
 
 
-def run_honeypot(server_id: str, config: dict[str, Any], *, timeout: float = 90.0, exercise_tools: bool = True) -> dict[str, Any]:
+def run_honeypot(
+    server_id: str,
+    config: dict[str, Any],
+    *,
+    timeout: float = 90.0,
+    exercise_tools: bool = True,
+    probe: Callable[[StdioClient, list[dict[str, Any]], Path], Any] | None = None,
+) -> dict[str, Any]:
+    """Launch the server once in the decoy environment and grade what it does.
+
+    ``probe`` (e.g. the vulnerability scanner's active probes) runs against the live honeypot
+    client after ``tools/list``, so anything it triggers is observed by the same sensors.
+    """
     canary = secrets.token_hex(10)
     token = f"{CANARY_PREFIX}{canary}"
     workdir = Path(tempfile.mkdtemp(prefix="sentinel-honeypot-"))
@@ -277,6 +289,11 @@ def run_honeypot(server_id: str, config: dict[str, Any], *, timeout: float = 90.
                 except Exception as exc:  # tool errors are fine; we only observe behaviour
                     outputs.append(f"error: {exc}")
                 exercised += 1
+        if probe is not None:
+            try:
+                probe(client, tools, home)
+            except Exception as exc:  # a probe failure must not hide the sandbox evidence
+                outputs.append(f"probe error: {exc}")
         time.sleep(1.0)  # let delayed (post-handshake) behaviour surface
     except Exception as exc:
         error = str(exc)
@@ -319,7 +336,7 @@ def run_honeypot(server_id: str, config: dict[str, Any], *, timeout: float = 90.
     poisoned = []
     names = [t.get("name", "") for t in tools]
     for tool in tools:
-        res = scanner.scan_tool(tool, other_tool_names=[n for n in names if n != tool.get("name")])
+        res = scanner.scan_tool(tool)  # cross-server shadowing needs the registry; discovery checks it
         if res.verdict != "CLEAN":
             poisoned.append({"tool": tool.get("name"), "verdict": res.verdict, "score": res.score})
     if any(p["verdict"] == "MALICIOUS" for p in poisoned):
@@ -358,7 +375,7 @@ def run_honeypot(server_id: str, config: dict[str, Any], *, timeout: float = 90.
                 "canary_credentials": True,
                 "egress_proxy": "registries only",
                 "real_secrets_exposed": False,
-                "note": "process isolation is best-effort (same OS user); use SENTINEL_SANDBOX_ENABLED with Docker for kernel isolation",
+                "note": "process isolation is best-effort (same OS user); run Sentinel in a container or VM for kernel-level isolation",
             },
         },
         "observed_behavior": {
@@ -366,7 +383,6 @@ def run_honeypot(server_id: str, config: dict[str, Any], *, timeout: float = 90.
             "process_spawn": bool(children),
             "filesystem": sorted(str(Path(p).name) for p in opened)[:30],
         },
-        "expected_behavior": {"network": [], "process_spawn": False, "filesystem": []},
         "timestamp": time.time(),
         "isolated": True,
         "note": "Sandbox results are evidence, not permanent trust.",

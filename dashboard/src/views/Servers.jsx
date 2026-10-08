@@ -2,13 +2,22 @@ import { useState } from "react";
 import { api, usePoll } from "../api.js";
 import { Card, Chips, Drawer, Empty, ErrorNote, Findings, Json, Modal, Pill, Tabs } from "../components/ui.jsx";
 import { routeTo, timeAgo } from "../format.js";
+import { GradeBadge } from "./Scanner.jsx";
 
+// Official reference servers, pinned (an unpinned `npx -y pkg` can change code on any launch).
 const PRESETS = [
-  { label: "Filesystem", name: "Filesystem", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem@2025.8.21", "<absolute path to a folder>"] },
-  { label: "Fetch", name: "Fetch", command: "uvx", args: ["mcp-server-fetch"] },
-  { label: "Memory", name: "Memory", command: "npx", args: ["-y", "@modelcontextprotocol/server-memory"] },
-  { label: "Git", name: "Git", command: "uvx", args: ["mcp-server-git", "--repository", "<absolute path to a repo>"] },
-  { label: "Lab SOC (stdio)", name: "Lab SOC stdio", command: "python", args: ["-m", "mcp_servers.soc_server", "--stdio"] },
+  { label: "Filesystem", name: "Filesystem", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem@2026.8.31", "<absolute path to a folder>"] },
+  { label: "Memory", name: "Memory", command: "npx", args: ["-y", "@modelcontextprotocol/server-memory@2026.8.31"] },
+  { label: "Fetch", name: "Fetch", command: "uvx", args: ["mcp-server-fetch==2026.8.18"] },
+  { label: "Git", name: "Git", command: "uvx", args: ["mcp-server-git==2026.8.18", "--repository", "<absolute path to a git repo>"] },
+  { label: "Time", name: "Time", command: "uvx", args: ["mcp-server-time==2026.8.18"] },
+  { label: "Sequential thinking", name: "Sequential thinking", command: "npx", args: ["-y", "@modelcontextprotocol/server-sequential-thinking@2026.8.31"] },
+  { label: "Everything (test)", name: "Everything", command: "npx", args: ["-y", "@modelcontextprotocol/server-everything@2026.8.31"] },
+];
+const REMOTE_PRESETS = [
+  { label: "DeepWiki", name: "DeepWiki", url: "https://mcp.deepwiki.com/mcp" },
+  { label: "Context7", name: "Context7", url: "https://mcp.context7.com/mcp" },
+  { label: "GitHub (PAT)", name: "GitHub", url: "https://api.githubcopilot.com/mcp/" },
 ];
 
 function parseLines(text) {
@@ -75,6 +84,12 @@ function AddServerModal({ onClose, onDone, toast }) {
           )}
         </Card>
         {(result.findings || []).length > 0 && <Card title="Supply-chain findings"><Findings items={result.findings} /></Card>}
+        {result.scan && !result.scan.error && (
+          <Card title="Vulnerability scan" subtitle="Passive SecureMCP-style scan run at registration">
+            <div className="row gap"><GradeBadge scan={result.scan} /><span>{result.scan.summary.total_vulnerabilities} finding(s): {result.scan.summary.critical_count} critical · {result.scan.summary.high_count} high · {result.scan.summary.medium_count} medium</span>
+              <a className="btn btn-sm" href="#/scanner">Open scanner</a></div>
+          </Card>
+        )}
         <div className="modal-actions"><button className="btn btn-primary" onClick={onClose}>Done</button></div>
       </Modal>
     );
@@ -84,11 +99,18 @@ function AddServerModal({ onClose, onDone, toast }) {
     <Modal title="Connect an MCP server" onClose={onClose} wide>
       <Tabs tabs={["Local (stdio)", "Remote (HTTP / SSE)"]} value={mode} onChange={setMode} />
       <form onSubmit={submit} className="form">
-        {mode === "Local (stdio)" && (
+        {mode === "Local (stdio)" ? (
           <div className="presets">
             <span className="muted small">Presets:</span>
             {PRESETS.map((p) => (
               <button type="button" key={p.label} className="btn btn-sm" onClick={() => setForm((f) => ({ ...f, server_name: p.name, command: p.command, args: p.args.join("\n") }))}>{p.label}</button>
+            ))}
+          </div>
+        ) : (
+          <div className="presets">
+            <span className="muted small">Presets:</span>
+            {REMOTE_PRESETS.map((p) => (
+              <button type="button" key={p.label} className="btn btn-sm" onClick={() => setForm((f) => ({ ...f, server_name: p.name, url: p.url, transport: "http" }))}>{p.label}</button>
             ))}
           </div>
         )}
@@ -146,8 +168,8 @@ function ImportModal({ onClose, onDone, toast }) {
     setBusy(false);
   }
   return (
-    <Modal title="Import from Claude Desktop / Cursor config" onClose={onClose} wide>
-      <p className="muted">Paste the contents of <span className="mono">claude_desktop_config.json</span> (or any <span className="mono">mcpServers</span> block). Each server is registered behind Sentinel; Sentinel's own entry is skipped. Then replace those entries in Claude with the single <span className="mono">mcp-sentinel</span> entry (or run <span className="mono">mcp-sentinel import-claude --replace</span>).</p>
+    <Modal title="Import an MCP client config" onClose={onClose} wide>
+      <p className="muted">Paste <span className="mono">claude_desktop_config.json</span>, a Claude Code <span className="mono">.mcp.json</span>, Cursor's <span className="mono">mcp.json</span> or VS Code's <span className="mono">.vscode/mcp.json</span>. Each server is registered behind Sentinel (Sentinel's own entry is skipped; <span className="mono">{"${VAR}"}</span> references are expanded). Then remove those entries from the client and keep only <span className="mono">mcp-sentinel</span> — or let the CLI do both: <span className="mono">mcp-sentinel import-claude --replace</span> (Claude Desktop) / <span className="mono">--from code --replace</span> (Claude Code).</p>
       <textarea className="input mono" rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder='{"mcpServers": {"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/Documents"]}}}' />
       <label className="checkbox-row"><input type="checkbox" checked={sandbox} onChange={(e) => setSandbox(e.target.checked)} /> Honeypot-sandbox each local server first</label>
       <ErrorNote error={error} />
@@ -162,6 +184,39 @@ function ImportModal({ onClose, onDone, toast }) {
         <button className="btn btn-primary" disabled={busy || !text.trim()} onClick={run}>{busy ? "Importing…" : "Import"}</button>
       </div>
     </Modal>
+  );
+}
+
+/** Edit how a server is launched / reached — e.g. bump a pinned package version. Sentinel reconnects
+ *  and diffs the new tool definitions against the pins (a real supply-chain update path). */
+function EditLaunch({ server, onSaved, onError }) {
+  const stdio = server.transport === "stdio";
+  const [command, setCommand] = useState(server.config?.command || "");
+  const [args, setArgs] = useState((server.config?.args || []).join("\n"));
+  const [url, setUrl] = useState(server.config?.url || "");
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true);
+    try {
+      const body = stdio ? { command, args: parseLines(args) } : { url };
+      onSaved(await api.patch(`/v1/servers/${server.server_id}`, body));
+    } catch (e) {
+      onError(e.message);
+    }
+    setBusy(false);
+  }
+  return (
+    <div className="form">
+      {stdio ? (
+        <>
+          <label>Command<input className="input mono" value={command} onChange={(e) => setCommand(e.target.value)} /></label>
+          <label>Arguments <span className="muted small">(one per line — e.g. change the pinned version)</span><textarea className="input mono" rows={3} value={args} onChange={(e) => setArgs(e.target.value)} /></label>
+        </>
+      ) : (
+        <label>URL<input className="input mono" value={url} onChange={(e) => setUrl(e.target.value)} /></label>
+      )}
+      <div className="modal-actions"><button className="btn btn-sm btn-primary" disabled={busy} onClick={save}>{busy ? "Reconnecting & diffing…" : "Save & reconnect"}</button></div>
+    </div>
   );
 }
 
@@ -184,14 +239,15 @@ function ServerDetail({ serverId, onClose, toast, isAdmin }) {
   if (!s) return <Drawer title="Server" onClose={onClose}><ErrorNote error={detail.error} /></Drawer>;
   const actions = isAdmin && (
     <>
-      <button className="btn btn-sm" disabled={!!busy} onClick={() => act("Re-scan", () => api.post(`/v1/servers/${serverId}/discover`))}>{busy === "Re-scan" ? "Scanning…" : "Re-scan"}</button>
+      <button className="btn btn-sm" disabled={!!busy} onClick={() => act("Re-check tools", () => api.post(`/v1/servers/${serverId}/discover`))} title="re-list tools now and diff them against the pinned definitions">{busy === "Re-check tools" ? "Checking…" : "Re-check tools"}</button>
+      <button className="btn btn-sm" disabled={!!busy} onClick={() => act("Vulnerability scan", () => api.post(`/v1/servers/${serverId}/scan`, { active: false }))}>{busy === "Vulnerability scan" ? "Scanning…" : "Vulnerability scan"}</button>
       <button className="btn btn-sm btn-primary" disabled={!!busy} onClick={() => act("Verify", () => api.post(`/v1/servers/${serverId}/verify`))}>{busy === "Verify" ? "Verifying…" : "Verify"}</button>
     </>
   );
   return (
     <Drawer title={s.server_name} onClose={onClose} actions={actions}>
       <div className="row gap wrap">
-        <Pill value={s.trust_status} /> <Pill value={s.risk_state} /> <span className="chip">{s.transport}</span>
+        <GradeBadge scan={s.vuln_scan} /> <Pill value={s.trust_status} /> <Pill value={s.risk_state} /> <span className="chip">{s.transport}</span>
         <span className="mono small">{s.slug}__*</span>
         {s.connection?.connected ? <span className="good-text small">● connected{s.connection.pid ? ` (pid ${s.connection.pid})` : ""}</span> : <span className="muted small">○ not connected</span>}
         {!s.enabled && <span className="chip warning">disabled</span>}
@@ -238,7 +294,12 @@ function ServerDetail({ serverId, onClose, toast, isAdmin }) {
         </table>
       ))}
       {tab === "Logs" && <pre className="json logs">{(s.logs || []).join("\n") || "No server output captured."}</pre>}
-      {tab === "Config" && <Json value={{ config: s.config, server_info: s.server_info, protocol: s.protocol_version, connection: s.connection, last_discovery: s.last_discovery_summary }} />}
+      {tab === "Config" && (
+        <div className="stack">
+          {isAdmin && <EditLaunch server={s} onSaved={(res) => { toast(res.discovery?.changed?.length || res.discovery?.added?.length ? `Reconnected: ${res.discovery.changed.length} changed · ${res.discovery.added.length} added tool(s)` : "Reconnected"); detail.reload(); }} onError={(e) => toast(e, true)} />}
+          <Json value={{ config: s.config, server_info: s.server_info, protocol: s.protocol_version, connection: s.connection, last_discovery: s.last_discovery_summary }} />
+        </div>
+      )}
     </Drawer>
   );
 }
@@ -265,7 +326,7 @@ export default function Servers({ toast, isAdmin, selected }) {
         {(servers.data || []).map((s) => (
           <button key={s.server_id} className={`server-card ${s.trust_status}`} onClick={() => routeTo(`/servers/${s.server_id}`)}>
             <div className="row between">
-              <strong>{s.server_name}</strong>
+              <span className="row gap"><GradeBadge scan={s.vuln_scan} /><strong>{s.server_name}</strong></span>
               <Pill value={s.trust_status} />
             </div>
             <div className="mono small muted truncate">{s.endpoint}</div>

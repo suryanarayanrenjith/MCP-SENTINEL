@@ -3,8 +3,8 @@
 MCP-Sentinel is a **policy enforcement point (PEP)** that sits between MCP clients and MCP servers. It is also an MCP server to the client and an MCP client to every upstream server. The policy engine is the **policy decision point (PDP)**. The LLM can propose tool calls but cannot authorise them.
 
 ```
-Claude Desktop ──stdio──► sentinel.bridge ──HTTP──┐
-Claude Code / any client ──Streamable HTTP /mcp──►│  MCP-Sentinel control plane (FastAPI)
+Claude Desktop / Claude Code ──stdio──► sentinel.bridge ──HTTP──┐
+Cursor / VS Code / any client ──Streamable HTTP /mcp──►│  MCP-Sentinel control plane (FastAPI)
 Dashboard (React) ──REST /v1──────────────────────►│
                                                    │  frontend → gateway → pipeline (PDP) → upstream manager
                                                    └──► stdio servers (npx/uvx/docker/python), Streamable HTTP, legacy SSE
@@ -26,7 +26,6 @@ Dashboard (React) ──REST /v1────────────────
    | input | path traversal, credential paths, shell chaining, dangerous commands, metadata SSRF, dangerous URL schemes |
    | policy | RBAC × capability, admin DENY rules, lockdown, restricted server running a sensitive tool, forbidden destinations |
    | dataflow | content taint (secret bytes leaving), SECRET/CRITICAL data to an external sink |
-   | runtime | critical runtime deviation (lab/demo telemetry, or process-monitor findings) |
    | risk | score ≥ block threshold |
 
    Gates that pass contribute **evidence** to the risk engine instead: the trust prior, schema drift, soft input findings, sequence transitions, context mismatch, the lethal trifecta, prompt-injection in arguments, velocity, behavioural drift and workflow risk memory. See [risk-engine.md](risk-engine.md).
@@ -58,19 +57,19 @@ Dashboard (React) ──REST /v1────────────────
 
 | Path | Role |
 |---|---|
-| `sentinel/` | app, pipeline, gateway, MCP frontend/bridge, receipts, DLP, netutil, CLI, demo |
+| `sentinel/` | app, pipeline, gateway, MCP frontend/bridge, receipts, DLP, netutil, CLI |
 | `sentinel/upstream/` | MCP client (stdio, Streamable HTTP, legacy SSE) and connection manager |
-| `sentinel/routes/` | REST API (core, gateway, servers, tools, approvals, audit, policy) |
+| `sentinel/routes/` | REST API (core, gateway, servers, scans, tools, approvals, audit, policy) |
+| `sentinel/clientconfig.py` | Claude Desktop / Claude Code / Cursor / VS Code config discovery, parsing and `${VAR}` expansion |
 | `identity/` | OIDC/JWT verification, demo tokens, Keycloak realm |
 | `policy/` | Python PDP, admin rules, OPA/Rego bundle |
-| `integrity/` | registry, discovery, scanner, rug-pull diff, capability inference, supply chain, toxic flows |
+| `integrity/` | registry, discovery, poisoning scanner, rug-pull diff, capability inference, supply chain, toxic flows, vulnerability scanner (`vulnscan.py`, SecureMCP port) |
 | `risk/` | evidence-fusion engine and workflow risk memory |
 | `workflow/` | sequential analyser and context/intent engine |
 | `dataflow/` | data classification, exfiltration guard, content taint |
 | `mfa/` | TOTP, enrolment, step-up challenges |
 | `monitoring/` | process monitor and statistical behavioural baselines |
-| `sandbox/` | honeypot sandbox and the legacy expected-vs-observed probe |
-| `mcp_servers/` | lab SOC MCP server (Streamable HTTP + stdio) with a rug-pull switch |
+| `sandbox/` | honeypot sandbox (also hosts active vulnerability probes for local servers) |
 | `dashboard/` | React UI (it never makes security decisions) |
 
 ## Trust is never permanent
