@@ -25,6 +25,7 @@ from integrity.discovery import discover_server
 from integrity.registry import is_exposed, served_definition
 from monitoring import baseline as behavior_baseline
 from risk.engine import Evidence
+from sentinel import notify
 from sentinel.config import Settings
 from sentinel.db import ServerRow, ToolRow, WorkflowCallRow
 from sentinel.dlp import redact_structure, redact_text, scan_secrets, strip_invisible
@@ -231,6 +232,7 @@ class Gateway:
             # zero trust: the call first runs in the sandbox against a copy of the files
             ctx, decision, info = guard.check(server, tool, request, decision, identity)
         outcome = CallOutcome(decision=decision, identity=identity, exposed_name=exposed, sandbox=info)
+        self._announce(outcome, server, info)
         finished = False
         try:
             if decision.decision not in EXECUTABLE_DECISIONS:
@@ -263,6 +265,10 @@ class Gateway:
             if post.get("evasion"):
                 evasion = post["evasion"]
                 restored = len((evasion.get("reverted") or {}).get("restored", []))
+                notify.notify(self.session, "sandbox_evasion", title=f"{exposed} changed files outside its sandbox prediction",
+                              message=f"{evasion.get('message')}. Sentinel restored {restored} file(s), withheld the output and quarantined the tool.",
+                              url=f"{self.settings.dashboard_base_url}/#/sandbox", severity="CRITICAL",
+                              details={"server_id": server.server_id, "tool": tool.tool_name, "receipt_id": decision.receipt_id})
                 outcome.output_report["sandbox_evasion"] = evasion
                 outcome.structured = None
                 outcome.content = [{"type": "text", "text": (
@@ -275,6 +281,26 @@ class Gateway:
         finally:
             if not finished:
                 guard.after(ctx, executed=False)
+
+    def _announce(self, outcome: CallOutcome, server: ServerRow | None, info: dict[str, Any] | None) -> None:
+        """Tell a person, once, when a call waits for them or the sandbox blocked it."""
+        d = outcome.decision
+        name = server.server_name if server is not None else ""
+        preview = (info or {}).get("preview")
+        why = "; ".join(d.reasons[:2])
+        if d.decision == Decision.HUMAN_APPROVAL and d.approval_id and _first_notice(d.approval_id):
+            notify.notify(self.session, "approval", title=f"{outcome.exposed_name} on {name} needs your approval",
+                          message=f"Risk {d.risk.score}/100. {why}", url=approval_link(self.settings, "approval", d.approval_id),
+                          severity="HIGH", details={"approval_id": d.approval_id, "receipt_id": d.receipt_id}, preview=preview)
+        elif d.decision == Decision.MFA_REQUIRED and d.mfa_challenge_id and _first_notice(d.mfa_challenge_id):
+            notify.notify(self.session, "mfa", title=f"{outcome.exposed_name} on {name} needs step-up",
+                          message=f"Risk {d.risk.score}/100. {why}", url=approval_link(self.settings, "mfa", d.mfa_challenge_id),
+                          severity="HIGH", details={"challenge_id": d.mfa_challenge_id, "receipt_id": d.receipt_id}, preview=preview)
+        elif d.decision == Decision.BLOCK and (info or {}).get("action") == "BLOCKED":
+            notify.notify(self.session, "sandbox_block", title=f"Sandbox blocked {outcome.exposed_name} on {name}",
+                          message=why, url=f"{self.settings.dashboard_base_url}/#/sandbox",
+                          severity="CRITICAL" if info.get("verdict") == "MALICIOUS" else "HIGH",
+                          details={"receipt_id": d.receipt_id, "verdict": info.get("verdict")}, preview=preview)
 
     def _mark_executed(self, call_id: int | None, executed: bool, data_class: str | None = None) -> None:
         if call_id is None:
@@ -425,6 +451,22 @@ class Gateway:
             "behavior_anomalies": [{"severity": s, "message": m} for s, m in anomalies],
             "withheld": quarantine_output,
         })
+
+
+_noticed: dict[str, float] = {}
+_noticed_lock = threading.Lock()
+
+
+def _first_notice(ident: str) -> bool:
+    """True the first time an approval / challenge id is announced (retries reuse the same id)."""
+    now = time.time()
+    with _noticed_lock:
+        for key in [k for k, t in _noticed.items() if now - t > 3600]:
+            _noticed.pop(key, None)
+        if ident in _noticed:
+            return False
+        _noticed[ident] = now
+        return True
 
 
 def client_input_schema(schema: Any) -> dict[str, Any]:

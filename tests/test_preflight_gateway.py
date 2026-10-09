@@ -6,34 +6,10 @@ fixture; the "real" side effects in the evasion test are simulated on a temp fol
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from sandbox.shadow import SandboxManager
 from tests.helpers import call, headers
 
 ADMIN = "SECURITY_ADMIN"
-
-
-@pytest.fixture
-def workspace(tmp_path) -> Path:
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    (ws / "report.txt").write_text("quarterly numbers v1")
-    (ws / "keep.txt").write_text("keep me")
-    return ws
-
-
-@pytest.fixture
-def stdio_server(client, stdio_fixture_config, workspace):
-    """The test server over stdio, configured with a workspace folder (a sandbox root)."""
-    resp = client.post("/v1/servers", headers=headers(ADMIN), json={
-        "server_name": "local", "transport": "stdio", "command": stdio_fixture_config["command"],
-        "args": [*stdio_fixture_config["args"], str(workspace)], "run_sandbox": False,
-    })
-    assert resp.status_code == 200, resp.text
-    return resp.json()["server_id"]
 
 
 def _verdict(verdict: str, reasons: list[str], files: list[dict] | None = None) -> dict:

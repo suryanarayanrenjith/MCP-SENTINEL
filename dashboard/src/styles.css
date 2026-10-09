@@ -392,3 +392,13 @@ pre.diff div.hunk { color: var(--info); }
 .vuln.MEDIUM { border-left-color: var(--warning); }
 .vuln.LOW { border-left-color: var(--info); }
 @media (max-width: 640px) { .sev-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* ── workflow replay ─────────────────────────────────────────── */
+.replay { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.replay-item { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px; padding: 8px 10px; background: var(--surface-2); }
+.replay-item.sev-CRITICAL { border-left-color: var(--critical); }
+.replay-item.sev-HIGH { border-left-color: var(--serious); }
+.replay-item.sev-MEDIUM { border-left-color: var(--warning); }
+.replay-item.current { outline: 2px solid var(--info); }
+.replay-item ul { margin: 4px 0 0; padding-left: 18px; }
+.replay-icon { width: 20px; text-align: center; }
