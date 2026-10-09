@@ -3,6 +3,7 @@ import { api, mintDemoToken, safeStorage, setApiToken, usePoll } from "./api.js"
 import { RiskWaterfall } from "./components/charts.jsx";
 import { Drawer, Json, Meter, Pill } from "./components/ui.jsx";
 import { routeTo, timeAgo } from "./format.js";
+import Alerts from "./views/Alerts.jsx";
 import Approvals, { ApprovalPage } from "./views/Approvals.jsx";
 import Audit, { Leases } from "./views/Audit.jsx";
 import Connect from "./views/Connect.jsx";
@@ -22,6 +23,7 @@ const NAV = [
   ["integrity", "Rug pulls", "⚠"],
   ["approvals", "Approvals", "✋"],
   ["sandbox", "Sandbox", "⧉"],
+  ["alerts", "Alerts", "🔔"],
   ["workflows", "Workflows", "⇢"],
   ["audit", "Audit", "≣"],
   ["leases", "Leases", "⏱"],
@@ -216,6 +218,7 @@ export default function App() {
       case "policy": return <Policy {...common} />;
       case "scanner": return <Scanner {...common} />;
       case "sandbox": return <Sandbox {...common} />;
+      case "alerts": return <Alerts {...common} />;
       case "connect": return <Connect session={session} toast={toast} />;
       default: return <Overview summary={s} onReceipt={setReceipt} />;
     }

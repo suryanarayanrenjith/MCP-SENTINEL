@@ -28,6 +28,7 @@ from integrity.capabilities import Inference, infer
 from integrity.crypto import canonical_hash, canonical_json
 from integrity.registry import disambiguate_exposed_names, exposed_name_for, slugify
 from integrity.supplychain import analyze_http, analyze_stdio
+from sentinel import notify
 from sentinel.config import get_settings
 from sentinel.db import ServerRow, ToolChangeRow, ToolRow
 from sentinel.leases import CapabilityLeaseManager
@@ -290,6 +291,11 @@ def apply_tool_list(
         summary["changed"].append({"tool": name, "classification": cls.value, "score": report.score, "change_id": change.change_id})
         if cls in {ChangeClass.SUSPICIOUS, ChangeClass.MALICIOUS}:
             summary["alerts"].append({"tool": name, "severity": severity, "message": message})
+        if cls == ChangeClass.MALICIOUS:
+            notify.notify(session, "rug_pull", title=f"'{name}' on {server.server_name} changed after approval",
+                          message=message + ". The tool is quarantined and the model keeps receiving the approved definition.",
+                          url=f"{get_settings().dashboard_base_url}/#/integrity/{change.change_id}", severity="CRITICAL",
+                          details={"server_id": server.server_id, "tool": name, "change_id": change.change_id})
 
     for name, row in existing.items():
         if name in seen or row.removed:

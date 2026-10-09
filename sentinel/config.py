@@ -87,6 +87,16 @@ class Settings(BaseSettings):
     sandbox_memory: str = "512m"
     sandbox_cpus: str = "1"
     undo_retention: int = 200  # undo journals kept (oldest pruned first)
+    sandbox_runtime: str = ""  # OCI runtime for sandbox / contained servers, e.g. "runsc" (gVisor)
+
+    # Out-of-band notifications (also configurable in the dashboard, stored encrypted)
+    notify_slack_webhook_url: str = ""
+    notify_teams_webhook_url: str = ""
+    notify_ntfy_url: str = ""
+    notify_ntfy_token: str = ""
+    notify_webhook_urls: str = ""  # comma-separated generic JSON webhooks
+    notify_webhook_secret: str = ""  # HMAC-SHA256 signing secret for the generic webhooks
+    notify_events: str = "approval,mfa,sandbox_block,sandbox_evasion,server_unsafe,rug_pull"
 
     # Data-flow / egress
     internal_domains: str = "internal,local,localhost,lan,corp,home.arpa,svc,cluster.local"

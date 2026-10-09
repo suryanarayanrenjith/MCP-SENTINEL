@@ -4,6 +4,7 @@ import { RiskWaterfall, Sparkline } from "../components/charts.jsx";
 import { Card, Empty, ErrorNote, Meter, Pill } from "../components/ui.jsx";
 import { routeTo, short, timeAgo } from "../format.js";
 import { TrifectaDots } from "./Overview.jsx";
+import { WorkflowReplay } from "../components/replay.jsx";
 
 const ROLE_ICON = { PRIVATE_SOURCE: "🗄", UNTRUSTED_SOURCE: "🌐", EGRESS_SINK: "📤" };
 
@@ -24,6 +25,7 @@ function WorkflowDetail({ id }) {
       {Object.keys(s.risk_memory || {}).length > 0 && (
         <p className="small">Risk memory (decaying): {Object.entries(s.risk_memory).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(" · ")}</p>
       )}
+      <WorkflowReplay workflowId={id} />
       <Card title="Risk per call">
         <Sparkline points={w.receipts.map((r) => r.risk_score)} labels={w.receipts.map((r) => r.tool)} />
       </Card>

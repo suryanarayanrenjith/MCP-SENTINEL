@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from integrity.vulnscan import ScanReport, scan_config
-from sentinel import safety
+from sentinel import notify, safety
 from sentinel.config import Settings, get_settings
 from sentinel.db import ServerRow, ToolRow, VulnScanRow
 from sentinel.deps import admin_identity, db_session, reader
@@ -94,6 +94,10 @@ def apply_safety(session: Session, row: ServerRow, report: dict[str, Any]) -> di
         row.trust_status = TrustStatus.RESTRICTED.value
         AuditStore(session).write_event("server_unsafe", "HIGH", f"{row.server_name} is not safe to use: {verdict['reasons'][0] if verdict['reasons'] else 'severe findings'}",
                                         {"server_id": row.server_id, "safety": verdict})
+        notify.notify(session, "server_unsafe", title=f"{row.server_name} is NOT SAFE", message=verdict["headline"]
+                      + (" Fix first: " + verdict["recommendations"][0] if verdict.get("recommendations") else ""),
+                      url=f"{get_settings().dashboard_base_url}/#/servers/{row.server_id}", severity="HIGH",
+                      details={"server_id": row.server_id, "reasons": verdict["reasons"][:5]})
     session.commit()
     return verdict
 
