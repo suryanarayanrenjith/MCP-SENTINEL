@@ -13,7 +13,7 @@ The LLM can only *propose* a tool call. Sentinel decides.
  Cursor / VS Code / any client ──Streamable HTTP /mcp────►├─ MCP-Sentinel ─► your MCP servers (stdio · HTTP · SSE)
  Dashboard ───────────────────────────────REST /v1───────►┘
       identity → server trust → tool integrity (pinned) → input validation → RBAC × capability → policy / lockdown
-      → sequence · context · data flow · content taint · behaviour → risk = likelihood × impact
+      → sequence · kill-chain · context · caller baseline (UEBA) · data flow · content taint · behaviour → risk = likelihood × impact
       → obligations (MFA step-up · human approval · scoped lease) → sandbox pre-flight (shadow run, verdict, preview)
       → execute → verify real effect vs. prediction (revert surprises, undo journal) → output firewall → signed receipt
 ```
@@ -37,23 +37,38 @@ Sentinel ships with an **empty registry**: no built-in or demo servers. See **[D
 | **Tool-poisoning scanner** | Hidden `<IMPORTANT>` blocks, instruction overrides, secrecy directives, approval-bypass wording, credential-path references, cross-server shadowing, Unicode-tag / zero-width / bidi / ANSI smuggling, encoded payloads, all checked in descriptions *and* parameter metadata. Tuned on real servers to avoid false positives. |
 | **Content-level taint tracking** | Secrets returned by any tool are redacted for the model and fingerprinted. If those bytes later leave through *any* tool, even URL-, base64- or hex-encoded, the call is hard-blocked. |
 | **Lethal-trifecta breaker** | Per workflow and across the whole toolset: private data + untrusted content + egress is detected, and Sentinel names the smallest set of servers to restrict. |
-| **Evidence-fusion risk engine** | Risk = likelihood (noisy-OR of independent evidence) × impact (capability, data class, destructiveness, egress), with decaying per-workflow memory and an additive explanation waterfall. Hard policy always wins. |
+| **Caller behaviour analytics (UEBA)** | Sentinel profiles the *caller*, not just the server: each user / agent gets a learned baseline (tools, servers, capabilities, active hours, sensitive-access rate, agents). Deviations become risk evidence — a first-ever sensitive capability, an unfamiliar agent on a known identity (token reuse), off-hours sensitive access, a volume spike, or sensitive attempts after repeated denials. A new caller is never penalised during its learning window. |
+| **Indirect-injection kill chain** | Beyond the immediately preceding call, a sensitive / code-execution / infrastructure action is flagged when untrusted content was ingested *anywhere* earlier in the workflow (the classic prompt-injection → privileged-action chain). |
+| **Evidence-fusion risk engine** | Risk = likelihood (noisy-OR of independent evidence) × impact (capability, data class, destructiveness, egress), with decaying per-workflow memory, a corroboration boost when several independent detectors agree, and an additive explanation waterfall. Hard policy always wins. |
 | **Out-of-band step-up** | RFC 6238 TOTP (replay-protected) or human approval. Claude's call is *held open* while you approve in the browser, then completes inline under a short-lived, scoped capability lease. |
 | **Output firewall** | Invisible / ANSI characters stripped, secrets redacted, prompt injections withheld or spotlighted, outputs withheld when the server misbehaved during the call. |
 | **Tamper-evident ledger** | Every decision is a SHA-256 hash-chained, Ed25519-signed receipt with its gate trace and risk factors. |
 
 ## Quick start
 
-Requirements: Python ≥ 3.11, and Node 18+ for the dashboard and `npx` servers. Optionally [uv](https://docs.astral.sh/uv/) for `uvx` servers. **Docker Desktop / Engine is strongly recommended**: with it, sandbox pre-flights are fully contained. Open **Sandbox → Build image** once (Sentinel also builds it on first use). Without Docker, Sentinel uses the process sandbox (observation only) and escalates write and execute calls it cannot verify.
+Requirements: Python ≥ 3.11, Node 18+ (dashboard and `npx` servers), [uv](https://docs.astral.sh/uv/) (`uvx` servers, and a managed Python if your system one is older) and **Docker Desktop or Docker Engine** for full sandbox containment. Without Docker, Sentinel uses the process sandbox (observation only) and escalates write and execute calls it cannot verify.
+
+**Linux (tested on Pop!_OS 22.04 with Docker Desktop and Claude Desktop for Linux) and macOS:**
 
 ```bash
-python -m venv .venv && source .venv/bin/activate      # Windows: .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-(cd dashboard && npm install && npm run build)         # Windows: cd dashboard; npm install; npm run build; cd ..
-
-mcp-sentinel serve                  # API + dashboard on http://127.0.0.1:8443
-mcp-sentinel install-claude         # Claude Desktop  (or: mcp-sentinel install-claude-code)
+make setup            # uv-managed Python 3.12 venv, dashboard build, Docker sandbox image
+make claude           # add Sentinel to Claude Desktop (keeps a backup of your config)
+make run              # API + dashboard on http://127.0.0.1:8443
+make doctor           # checks Python, Docker, the sandbox, npx/uvx and the Claude Desktop setup
+make reset-demo       # clear demo activity and refresh ~/sentinel-demo (keeps servers)
 ```
+
+`make setup` runs these steps, which you can also run by hand (on Windows use `python -m venv .venv` and `pip install -e ".[dev]"`):
+
+```bash
+uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"
+(cd dashboard && npm install && npm run build)
+docker build -t mcp-sentinel/sandbox:1 -f docker/sandbox-runtime.Dockerfile docker/   # or Dashboard → Sandbox → Build image
+.venv/bin/mcp-sentinel install-claude          # Claude Desktop   (or: install-claude-code)
+.venv/bin/mcp-sentinel serve
+```
+
+You don't even need `make run` before opening Claude: when Claude Desktop launches Sentinel's bridge and the API isn't running, the bridge starts it in the background (`~/.mcp-sentinel/sentinel.log`; stop it with `mcp-sentinel stop`). Claude Desktop **Desktop Extensions** (Settings → Extensions, e.g. the built-in Filesystem one) talk to Claude directly and bypass Sentinel: the dashboard's **Connect** page and `mcp-sentinel doctor` list them so you can turn them off.
 
 Then add servers in the dashboard (**Servers → Connect server**; presets for Filesystem, Memory, Fetch, Git, Time, …), or move the ones you already use behind Sentinel:
 
@@ -64,16 +79,16 @@ mcp-sentinel import-claude --from code --replace  # from Claude Code (~/.claude.
 
 Sentinel announces new tools with `tools/list_changed`. Clients that honour it refresh on their own; in Claude Code run `/mcp` to reconnect if needed. Claude Desktop caches its tool list: toggle the connector or restart it. Until then, new tools are usable immediately through `sentinel_discover_tools` / `sentinel_invoke`, which go through the same enforcement.
 
-Tests: `pytest -q`. The suite runs against a real MCP server over stdio and Streamable HTTP.
+Tests: `make test` (or `.venv/bin/python -m pytest -q`). The suite runs against a real MCP server over stdio and Streamable HTTP, and the sandbox tests use the real Docker backend when the image is built.
 
-Docker Compose (Postgres, Redis, Keycloak, OPA; the image includes Node and uv for stdio servers): `docker compose up --build`, then open http://localhost:3000.
+Data lives in the project folder (`sentinel.db`, `keys/`) and in `~/.mcp-sentinel/` (sandbox package cache, mirrors, undo journal, log), whatever directory you start Sentinel from. Reset the demo to a clean slate any time with `scripts/reset-demo.sh` (clears all activity and caller profiles, keeps the registered servers) or `scripts/reset-demo.sh --wipe --start` (empty registry, then re-registers and re-audits the four demo servers).
+
+**Docker Compose** (Postgres + Redis, for a shared team instance): `docker compose up --build`, then open http://localhost:3000. Inside the container Sentinel has no Docker access, so the sandbox runs in process mode; run Sentinel on the host for full containment and the Claude Desktop bridge.
 
 ## Next add-ons worth building
 
-Implemented in this release: sandbox pre-flight, effect previews, the time machine, the evasion tripwire, the blast-radius guard, the behaviour audit and the safety verdict. Natural next steps with high demo value:
+Already implemented: sandbox pre-flight, effect previews, the time machine, the evasion tripwire, the blast-radius guard, the behaviour audit and the safety verdict, approval alerts to Slack / Teams / ntfy (phone) / signed webhooks with the effect preview, and workflow replay exported as a signed incident report ([details](docs/notifications-and-reports.md)). Natural next steps:
 
-* **One-tap approvals in Slack / Teams / mobile push** carrying the same effect preview, so a person approves the effect from anywhere.
-* **Workflow replay**: a timeline of an agent session (calls, sandbox runs, taint flows, decisions) that can be exported as an incident report.
 * **gVisor / Firecracker runtime** for the sandbox (`--runtime=runsc`), and the option to run the real stdio servers in containers too.
 * **Signed server attestations** (Sigstore) plus a shared, signed feed of observed rug pulls and malicious tool behaviours.
 * **Per-user upstream OAuth**, so each person's calls use their own credentials.
@@ -81,7 +96,7 @@ Implemented in this release: sandbox pre-flight, effect previews, the time machi
 ## Documentation
 
 - **[DEMO.md](DEMO.md)**: live demo script · [Compatible MCP servers](docs/mcp-servers.md)
-- [Sandboxed tool calls](docs/sandbox.md) · [Architecture](docs/architecture.md) · [Risk engine](docs/risk-engine.md) · [Rug-pull detection](docs/rug-pull-detection.md) · [Vulnerability scanner](docs/vulnerability-scanner.md)
+- [Sandboxed tool calls](docs/sandbox.md) · [Notifications & incident reports](docs/notifications-and-reports.md) · [Architecture](docs/architecture.md) · [Risk engine](docs/risk-engine.md) · [Rug-pull detection](docs/rug-pull-detection.md) · [Vulnerability scanner](docs/vulnerability-scanner.md)
 - [Claude Desktop, Claude Code & other clients](docs/llm-integration.md) · [API](docs/api.md)
 - [Security model](docs/security-model.md) · [Threat model](docs/threat-model.md) · [Limitations](docs/limitations.md)
 

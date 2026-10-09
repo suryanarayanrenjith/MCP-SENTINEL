@@ -3,7 +3,7 @@
 ## Verification scope
 
 * Upstream compatibility was verified with the official reference servers (Filesystem, Memory, Everything in stdio, Streamable HTTP and SSE modes, Fetch, Git, Time, Sequential Thinking) and with real version updates; see [mcp-servers.md](mcp-servers.md). Remote servers that need an interactive OAuth login are not supported yet.
-* The client side (stdio bridge and `/mcp`) was exercised with scripted JSON-RPC clients that behave like Claude: handshake, `tools/list`, calls with progress tokens, held step-up, `list_changed`. It has **not** been run inside Claude Desktop or Claude Code in our CI. Client behaviour can differ in its details, such as progress-notification timeouts and how `open_url` is handled.
+* The client side (stdio bridge and `/mcp`) is exercised in CI with scripted JSON-RPC clients that behave like Claude: handshake, `tools/list`, calls with progress tokens, held step-up, `list_changed`. It was also run inside Claude Desktop for Linux (`claude-desktop-unofficial` 1.19367; both the chat and the agent-mode bridge connect and list tools). Other client versions can differ in details such as progress-notification timeouts and how `open_url` is handled.
 * Claude Desktop caches its tool list and does not reliably honour `notifications/tools/list_changed`. Servers added after Claude starts can be used straight away through `sentinel_discover_tools` / `sentinel_invoke`; to see them as native tools, toggle the connector or restart Claude.
 * A held step-up call lasts `SENTINEL_WAIT_SECONDS` (50 s by default), which is chosen to stay under typical client request timeouts. If approval comes later, Claude has to call the tool again. The lease is then already in place.
 
@@ -26,7 +26,7 @@
 * Only MCP **tools** are proxied. Resources, prompts and sampling are not forwarded (Sentinel answers `resources/list` and `prompts/list` with empty lists), and upstream server→client requests other than `ping` are refused.
 * Remote upstream servers authenticate with static headers or bearer tokens. MCP OAuth authorisation flows to upstream servers are not implemented.
 * Demo mode uses an HS256 shared secret and offers demo confirmation in place of MFA. Use OIDC (`SENTINEL_AUTH_MODE=oidc`) and TOTP or IdP MFA outside a local demo.
-* OPA/Rego is shipped as an optional PDP (`SENTINEL_OPA_ENABLED`). Tests use the equivalent Python PDP.
+* Claude Desktop **Desktop Extensions** (for example the built-in Filesystem extension) talk to Claude directly and cannot be put behind Sentinel. The dashboard's Connect page and `mcp-sentinel doctor` list the enabled ones; turn them off and connect the same server through Sentinel instead.
 
 ## Future work
 

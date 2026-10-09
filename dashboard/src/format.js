@@ -1,6 +1,14 @@
+/** Parse an API timestamp. The API speaks UTC; a value without an offset is UTC, not local time. */
+export function parseTime(iso) {
+  if (iso === null || iso === undefined || iso === "") return new Date(NaN);
+  if (typeof iso === "number") return new Date(iso);
+  const s = String(iso);
+  return new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s) || !/\d{2}:\d{2}/.test(s) ? s : `${s}Z`);
+}
+
 export function timeAgo(iso) {
   if (!iso) return "—";
-  const t = new Date(iso).getTime();
+  const t = parseTime(iso).getTime();
   if (Number.isNaN(t)) return "—";
   const s = Math.max(0, Math.round((Date.now() - t) / 1000));
   if (s < 60) return `${s}s ago`;

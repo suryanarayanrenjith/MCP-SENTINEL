@@ -64,6 +64,6 @@ Secret values are fingerprinted (salted SHA-256, never stored in clear) for tain
 
 * OIDC with WebAuthn/FIDO2 step-up at the IdP (Keycloak realm included)
 * mTLS or SPIFFE identities for agents and remote servers
-* OPA-only decisioning with signed policy bundles (`policy/rego/`)
+* an external policy engine (for example OPA) with signed policy bundles, fed the same inputs as the built-in PDP (lockdown, admin rules, review state)
 * container or eBPF runtime sensors in place of best-effort process monitoring
 * signed server attestations (Sigstore, in-toto) consumed as integrity evidence

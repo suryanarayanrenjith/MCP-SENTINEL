@@ -10,10 +10,12 @@ Claude Code / Cursor / any Streamable-HTTP client ─────── /mcp ─
 ## 1. Start Sentinel
 
 ```bash
-pip install -e ".[dev]"
+uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"   # or: python -m venv .venv && pip install -e ".[dev]"
 (cd dashboard && npm install && npm run build)   # optional: the dashboard is then served by the API
 mcp-sentinel serve                                # http://127.0.0.1:8443
 ```
+
+You don't have to start it first: when Claude launches the bridge and nothing answers on a loopback `SENTINEL_API_URL`, the bridge starts the API in the background (log: `~/.mcp-sentinel/sentinel.log`). `mcp-sentinel stop` stops it, and `mcp-sentinel doctor` checks the whole setup.
 
 In demo mode (the default), the dashboard signs you in automatically as `local-user` with the SECURITY_ADMIN role. The demo token endpoint only answers loopback clients, and the API binds to `127.0.0.1` by default. Do not expose demo mode on a network.
 
@@ -42,9 +44,10 @@ This merges the following entry into `claude_desktop_config.json` and keeps a ti
 The config file is searched for in these locations:
 
 * macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+* Linux (community builds such as `claude-desktop-debian`): `~/.config/Claude/claude_desktop_config.json`
 * Windows: `%APPDATA%\Claude\claude_desktop_config.json`, plus the Microsoft Store (MSIX) location under `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\`
 
-Pass `--config <path>` to use another file. `mcp-sentinel claude-config` prints the entry without writing anything. Restart Claude Desktop afterwards.
+Pass `--config <path>` to use another file. `mcp-sentinel claude-config` prints the entry without writing anything. Restart Claude Desktop afterwards. The dashboard's **Connect** page then shows whether Claude Desktop is connected right now, and flags anything that still reaches Claude without Sentinel: other servers in the config and enabled **Desktop Extensions** (Settings → Extensions), which cannot be proxied and should be turned off.
 
 **Move existing servers behind Sentinel:**
 
@@ -86,6 +89,7 @@ To see newly added servers as native tools, toggle the `mcp-sentinel` connector 
 | `SENTINEL_OPEN_BROWSER` | `1` | open approval pages automatically |
 | `SENTINEL_WAIT_SECONDS` | API setting (50) | how long a call is held open waiting for approval |
 | `SENTINEL_WORKFLOW_ID` | per session | fixed workflow id. By default a new workflow starts after 30 minutes idle (`SENTINEL_WORKFLOW_IDLE_SECONDS`) |
+| `SENTINEL_AUTOSTART` | `1` | start the API if it is not running (loopback URLs only) |
 
 The bridge writes only MCP messages to stdout, and diagnostics go to stderr. On Windows it forces UTF-8 with `\n` line endings.
 

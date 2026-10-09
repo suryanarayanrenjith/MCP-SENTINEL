@@ -71,9 +71,12 @@ def contained_config(server_id: str, slug: str, config: dict[str, Any], manager:
         args += ["--network", "none"]
     if pkg_dir is not None:
         args += ["-v", f"{pkg_dir}:{launch.PKG}:ro"]
-    if plan.mount:
-        args += ["-v", f"{plan.mount}:{launch.APP}:ro"]
+    app = docker.app_mount(plan)
+    if app:
+        args += ["-v", f"{app}:{launch.APP}:ro"]
     for root in roots:  # a file root is mounted on its own, never its (possibly home) folder
+        if not docker.mountable(root.real):
+            raise ContainmentError(f"Docker cannot see {root.real}: add it under Docker Desktop -> Settings -> Resources -> File sharing")
         args += ["-v", f"{root.real}:{root.real}"]
     cwd = str(config.get("cwd") or "")
     first_dir = next((r.real for r in roots if not r.is_file), "")

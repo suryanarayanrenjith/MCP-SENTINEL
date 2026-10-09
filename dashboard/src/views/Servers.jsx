@@ -123,9 +123,9 @@ function AddServerModal({ onClose, onDone, toast }) {
         {mode === "Local (stdio)" ? (
           <>
             <label>Command<input className="input mono" required value={form.command} onChange={(e) => set("command", e.target.value)} placeholder="npx / uvx / python / node / docker" /></label>
-            <label>Arguments <span className="muted small">(one per line)</span><textarea className="input mono" rows={4} value={form.args} onChange={(e) => set("args", e.target.value)} /></label>
-            <label>Environment <span className="muted small">(KEY=value per line — stored encrypted, never shown to the model)</span><textarea className="input mono" rows={3} value={form.env} onChange={(e) => set("env", e.target.value)} placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=…" /></label>
-            <label>Working directory <span className="muted small">(optional)</span><input className="input mono" value={form.cwd} onChange={(e) => set("cwd", e.target.value)} /></label>
+            <label><span>Arguments <span className="muted small">(one per line)</span></span><textarea className="input mono" rows={4} value={form.args} onChange={(e) => set("args", e.target.value)} /></label>
+            <label><span>Environment <span className="muted small">(KEY=value per line — stored encrypted, never shown to the model)</span></span><textarea className="input mono" rows={3} value={form.env} onChange={(e) => set("env", e.target.value)} placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=…" /></label>
+            <label><span>Working directory <span className="muted small">(optional)</span></span><input className="input mono" value={form.cwd} onChange={(e) => set("cwd", e.target.value)} /></label>
             <label className="checkbox-row"><input type="checkbox" checked={form.sandbox} onChange={(e) => set("sandbox", e.target.checked)} /> Check it before connecting. Every tool is exercised in the sandbox right after it is added; when the sandbox is switched off, a honeypot run (decoy credentials, egress recording, process monitoring) is used instead.</label>
             <p className="muted small">Pin package versions (<span className="mono">pkg@1.2.3</span>): an unpinned <span className="mono">npx -y pkg</span> can change code on any launch — Sentinel flags it as a supply-chain rug-pull risk.</p>
           </>
@@ -138,8 +138,8 @@ function AddServerModal({ onClose, onDone, toast }) {
                 <option value="sse">Legacy HTTP+SSE</option>
               </select>
             </label>
-            <label>Bearer token <span className="muted small">(optional, stored encrypted)</span><input className="input mono" type="password" autoComplete="off" value={form.bearer} onChange={(e) => set("bearer", e.target.value)} /></label>
-            <label>Extra headers <span className="muted small">(Name: value per line)</span><textarea className="input mono" rows={2} value={form.headers} onChange={(e) => set("headers", e.target.value)} /></label>
+            <label><span>Bearer token <span className="muted small">(optional, stored encrypted)</span></span><input className="input mono" type="password" autoComplete="off" value={form.bearer} onChange={(e) => set("bearer", e.target.value)} /></label>
+            <label><span>Extra headers <span className="muted small">(Name: value per line)</span></span><textarea className="input mono" rows={2} value={form.headers} onChange={(e) => set("headers", e.target.value)} /></label>
           </>
         )}
         <label>Description<input className="input" value={form.description} onChange={(e) => set("description", e.target.value)} /></label>
@@ -215,7 +215,7 @@ function EditLaunch({ server, onSaved, onError }) {
       {stdio ? (
         <>
           <label>Command<input className="input mono" value={command} onChange={(e) => setCommand(e.target.value)} /></label>
-          <label>Arguments <span className="muted small">(one per line — e.g. change the pinned version)</span><textarea className="input mono" rows={3} value={args} onChange={(e) => setArgs(e.target.value)} /></label>
+          <label><span>Arguments <span className="muted small">(one per line — e.g. change the pinned version)</span></span><textarea className="input mono" rows={3} value={args} onChange={(e) => setArgs(e.target.value)} /></label>
         </>
       ) : (
         <label>URL<input className="input mono" value={url} onChange={(e) => setUrl(e.target.value)} /></label>

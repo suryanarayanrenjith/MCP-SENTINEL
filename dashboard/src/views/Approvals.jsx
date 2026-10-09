@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, usePoll } from "../api.js";
-import { Card, Empty, ErrorNote, Json, Meter, Pill } from "../components/ui.jsx";
+import { Card, Empty, ErrorNote, Json, Meter, Pending, Pill } from "../components/ui.jsx";
 import { routeTo, timeAgo } from "../format.js";
 import { SandboxPreview } from "../components/sandbox.jsx";
 
@@ -12,7 +12,7 @@ export function ApprovalPage({ kind, id, session, toast }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const d = item.data;
-  if (!d) return <ErrorNote error={item.error || "Loading…"} />;
+  if (!d) return <Pending error={item.error} />;
   const pending = d.status === "PENDING";
   const subject = d.subject;
   const mine = session.identity && session.identity.subject === subject;

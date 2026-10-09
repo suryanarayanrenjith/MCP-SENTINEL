@@ -8,6 +8,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -171,14 +172,33 @@ def _docker_image() -> bool:
         return False
 
 
+@pytest.fixture
+def docker_dir():
+    """A scratch folder Docker can bind-mount: Docker Desktop only shares the home folder by default, not /tmp."""
+    root = Path.home() / ".cache" / "mcp-sentinel-tests"
+    root.mkdir(parents=True, exist_ok=True)
+    path = Path(tempfile.mkdtemp(dir=root))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
+
+
 @pytest.mark.skipif(not _docker_image(), reason="Docker and the sandbox image are not available")
-def test_docker_backend_contains_a_real_call(tmp_path):
-    ws = tmp_path / "ws"
+def test_docker_backend_contains_a_real_call(tmp_path, docker_dir):
+    ws = tmp_path / "ws"  # the real workspace may live anywhere: only Sentinel's copy is mounted
     ws.mkdir()
     (ws / "a.txt").write_text("v1")
-    mgr = SandboxManager(_settings(tmp_path, sandbox_mode="docker"))
+    mgr = SandboxManager(_settings(docker_dir, sandbox_mode="docker"))
     cfg = {"command": sys.executable, "args": [FIXTURE, str(ws)]}
     ctx = mgr.begin("fxd", cfg, {"name": "search_logs", "capabilities": ["READ"]}, {"query": "x"}, preflight=True)
     mgr.finish(ctx, executed=False)
     assert ctx.preflight["backend"] == "docker" and ctx.preflight["verdict"] == "SAFE", ctx.preflight
     assert (ws / "a.txt").read_text() == "v1"
+
+
+@pytest.mark.skipif(not _docker_image(), reason="Docker and the sandbox image are not available")
+def test_docker_backend_reports_unshared_sandbox_folder(tmp_path):
+    mgr = SandboxManager(_settings(tmp_path, sandbox_mode="docker"))
+    if mgr.docker.mountable(tmp_path):
+        pytest.skip("this Docker engine can mount the temp folder")
+    status = mgr.status()
+    assert status["active_backend"] == "unavailable" and "File sharing" in status["docker"]["detail"]

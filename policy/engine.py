@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable
-
-import httpx
+from typing import Iterable
 
 from policy.rules import RuleMatch
 from sentinel.config import Settings
@@ -15,8 +13,6 @@ from sentinel.types import (
     IdentityContext,
     TrustStatus,
 )
-
-LAB_DENIED_DESTINATIONS = ("unknown.example", "evil.example")
 
 
 @dataclass
@@ -48,7 +44,6 @@ class PolicyEngine:
         destination: str | None,
         lease_active: bool,
         mfa_for_request: bool,
-        opa_input: dict[str, Any] | None = None,
         capabilities: Iterable[Capability] | None = None,
         destinations: Iterable[str] = (),
         rule_matches: list[RuleMatch] | None = None,
@@ -56,10 +51,6 @@ class PolicyEngine:
         review_state: str = "APPROVED",
         change_classification: str | None = None,
     ) -> PolicyDecision:
-        if self.settings.opa_enabled:
-            remote = self._opa({**(opa_input or {}), "capabilities": [c.value for c in (capabilities or [capability])]})
-            if remote is not None:
-                return remote
         return self._local(
             identity=identity,
             server_status=server_status,
@@ -165,30 +156,5 @@ class PolicyEngine:
         )
 
     def _forbidden_destination(self, destination: str) -> bool:
-        dest = destination.lower()
-        if any(b in dest for b in LAB_DENIED_DESTINATIONS):
-            return True
         parsed = parse_destination(destination, self.settings.internal_domain_list)
         return parsed is not None and parsed.host_class == HostClass.METADATA
-
-    def _opa(self, payload: dict[str, Any]) -> PolicyDecision | None:
-        try:
-            resp = httpx.post(
-                f"{self.settings.opa_url}/v1/data/sentinel/authz/decision",
-                json={"input": payload},
-                timeout=2.0,
-            )
-            resp.raise_for_status()
-            result = (resp.json() or {}).get("result") or {}
-            if not result:
-                return None
-            return PolicyDecision(
-                allow=bool(result.get("allow")),
-                policy_id=str(result.get("policy_id") or "opa.sentinel.authz"),
-                reasons=list(result.get("reasons") or []),
-                hard_block=bool(result.get("hard_block")),
-                require_mfa=bool(result.get("require_mfa")),
-                require_lease=bool(result.get("require_lease")),
-            )
-        except Exception:
-            return None

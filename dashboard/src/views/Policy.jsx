@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, usePoll } from "../api.js";
-import { Card, Chips, Empty, ErrorNote, Pill } from "../components/ui.jsx";
+import { Card, Chips, Empty, ErrorNote, Pending, Pill } from "../components/ui.jsx";
 
 const CAPS = ["READ", "WRITE", "EXTERNAL_LOOKUP", "SECRET_ACCESS", "DATA_TRANSFER", "INFRASTRUCTURE_CONTROL", "CODE_EXECUTION"];
 const ROLES = ["USER", "DEVELOPER", "ANALYST", "SECURITY_ADMIN", "SYSTEM_ADMIN"];
@@ -71,12 +71,12 @@ export default function Policy({ toast, isAdmin }) {
       toast(e.message, true);
     }
   }
-  if (!p) return <ErrorNote error={policy.error || "Loading…"} />;
+  if (!p) return <Pending error={policy.error} />;
   return (
     <div className="stack">
       <div className="page-head"><div>
         <h1>Policy</h1>
-        <p className="muted">RBAC + capability + context + risk. Policy is enforced outside the LLM, so a manipulated model can only ever <em>propose</em> a call. Engine: <span className="mono">{p.engine}</span>.</p>
+        <p className="muted">RBAC + capability + context + risk. Policy is enforced outside the LLM, so a manipulated model can only ever <em>propose</em> a call.</p>
       </div></div>
       <Card title="Lockdown" subtitle="Incident response switch">
         <div className="segmented">

@@ -54,7 +54,6 @@ def policy_overview(session: Session = Depends(db_session), settings: Settings =
         },
         "lockdown": get_runtime_flag(session, "lockdown", "off"),
         "rules": [rule_view(r) for r in session.query(PolicyRuleRow).order_by(PolicyRuleRow.priority).all()],
-        "engine": "opa" if settings.opa_enabled else "local",
         "hard_rules": [
             "missing/expired/foreign token → BLOCK",
             "unknown, disabled, quarantined or blocked server/tool → BLOCK",

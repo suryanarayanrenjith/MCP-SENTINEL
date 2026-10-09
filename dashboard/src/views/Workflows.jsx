@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, usePoll } from "../api.js";
 import { RiskWaterfall, Sparkline } from "../components/charts.jsx";
-import { Card, Empty, ErrorNote, Meter, Pill } from "../components/ui.jsx";
+import { Card, Empty, Meter, Pending, Pill } from "../components/ui.jsx";
 import { routeTo, short, timeAgo } from "../format.js";
 import { TrifectaDots } from "./Overview.jsx";
 import { WorkflowReplay } from "../components/replay.jsx";
@@ -12,7 +12,7 @@ function WorkflowDetail({ id }) {
   const wf = usePoll(() => api.get(`/v1/workflows/${encodeURIComponent(id)}`), [id], 3000);
   const [open, setOpen] = useState(null);
   const w = wf.data;
-  if (!w) return <ErrorNote error={wf.error || "Loading…"} />;
+  if (!w) return <Pending error={wf.error} />;
   const s = w.summary;
   return (
     <div className="stack">

@@ -1,7 +1,43 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { api, usePoll } from "../api.js";
-import { Card, CopyButton, ErrorNote, Pill } from "../components/ui.jsx";
+import { Card, CopyButton, ErrorNote, Pending, Pill } from "../components/ui.jsx";
+
+function Check({ tone, title, children }) {
+  const icon = { ok: "✓", warn: "!", bad: "✕" }[tone];
+  return (
+    <li className={`check ${tone}`}>
+      <span className="check-icon" aria-hidden="true">{icon}</span>
+      <div><div className="check-title">{title}</div>{children && <div className="small muted">{children}</div>}</div>
+    </li>
+  );
+}
+
+/** What Sentinel can see of Claude Desktop on this computer, including anything that bypasses it. */
+function DesktopStatus({ c }) {
+  const d = c.desktop || {};
+  const live = (c.clients || []).filter((x) => x.name.startsWith("Claude Desktop"));
+  const connected = live.filter((x) => x.connected);
+  const bypassExtensions = (d.extensions || []).filter((e) => e.enabled);
+  return (
+    <ul className="checks">
+      {d.error ? <Check tone="bad" title="Claude Desktop config is unreadable">{d.error}</Check>
+        : d.exists ? <Check tone="ok" title="Claude Desktop config found"><span className="mono">{d.config_path}</span></Check>
+          : <Check tone="warn" title="No Claude Desktop config yet">Install Claude Desktop and start it once, or run the install command below. Expected at <span className="mono">{d.config_path}</span></Check>}
+      {d.installed ? <Check tone="ok" title="MCP-Sentinel is installed in Claude Desktop" />
+        : <Check tone="bad" title="MCP-Sentinel is not in Claude Desktop yet">Run the install command below, then restart Claude Desktop.</Check>}
+      {connected.length > 0
+        ? <Check tone="ok" title={`Connected now: ${connected.map((x) => x.name).join(", ")}`}>Claude's bridge checked in {Math.round(connected[0].seconds_ago)}s ago as <span className="mono">{connected[0].subject}</span>.</Check>
+        : <Check tone="warn" title="Claude Desktop is not connected">{d.installed ? "Start (or restart) Claude Desktop; it launches Sentinel's bridge automatically." : "Install first, then restart Claude Desktop."}</Check>}
+      {(d.unprotected_servers || []).map((name) => (
+        <Check key={name} tone="bad" title={`"${name}" bypasses Sentinel`}>Claude Desktop runs it directly, so its calls are never checked. Move it behind Sentinel with the import command below.</Check>
+      ))}
+      {bypassExtensions.map((e) => (
+        <Check key={e.id} tone="bad" title={`Extension "${e.name}" bypasses Sentinel`}>Desktop Extensions talk to Claude directly. Turn it off in Claude Desktop → Settings → Extensions and connect the same server here instead.</Check>
+      ))}
+    </ul>
+  );
+}
 
 function TotpEnrollment({ session, toast }) {
   const status = usePoll(() => (session.token ? api.get("/v1/mfa/totp/status") : Promise.resolve(null)), [session.token]);
@@ -63,7 +99,7 @@ function TotpEnrollment({ session, toast }) {
 }
 
 export default function Connect({ session, toast }) {
-  const claude = usePoll(() => api.get("/v1/integrations/claude-desktop"), []);
+  const claude = usePoll(() => api.get("/v1/integrations/claude-desktop"), [], 5000);
   const c = claude.data;
   const [subject, setSubject] = useState(session.identity?.subject || "local-user");
   const [role, setRole] = useState("SECURITY_ADMIN");
@@ -77,17 +113,15 @@ export default function Connect({ session, toast }) {
       </div></div>
       <div className="grid-2">
         <Card title="1 · Claude Desktop" subtitle="Settings → Developer → Edit Config, or let the CLI do it">
-          {!c ? <ErrorNote error={claude.error || "Loading…"} /> : (
+          {!c ? <Pending error={claude.error} /> : (
             <div className="stack">
+              <DesktopStatus c={c} />
               <div className="row between"><span className="small muted">claude_desktop_config.json</span><CopyButton text={configText} /></div>
               <pre className="json">{configText}</pre>
               <p className="small">Or run (keeps a backup of your config):</p>
               <div className="row gap"><code className="mono small cmd">{c.cli}</code><CopyButton text={c.cli} /></div>
               <p className="small">Move your existing Claude Desktop servers behind Sentinel in one step:</p>
               <div className="row gap"><code className="mono small cmd">{c.import_cli}</code><CopyButton text={c.import_cli} /></div>
-              <ul className="plain small muted">
-                {Object.entries(c.config_paths).map(([os, path]) => <li key={os}>{os}: <span className="mono">{path}</span></li>)}
-              </ul>
               <ul className="plain small">{c.notes.map((n) => <li key={n}>ⓘ {n}</li>)}</ul>
             </div>
           )}

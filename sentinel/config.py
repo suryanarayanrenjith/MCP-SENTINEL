@@ -14,7 +14,8 @@ def _csv(value: str) -> list[str]:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SENTINEL_", env_file=".env", extra="ignore")
+    # the project's .env first, then one in the working directory (later files win)
+    model_config = SettingsConfigDict(env_prefix="SENTINEL_", env_file=(str(REPO_ROOT / ".env"), ".env"), extra="ignore")
 
     env: str = "dev"
     log_level: str = "INFO"
@@ -25,10 +26,8 @@ class Settings(BaseSettings):
     demo_jwt_secret: str = "change-me-demo-only-not-for-production"
     oidc_jwks_url: str = "http://localhost:8080/realms/mcp-sentinel/protocol/openid-connect/certs"
     oidc_client_id: str = "mcp-sentinel"
-    database_url: str = "sqlite:///./sentinel.db"
+    database_url: str = f"sqlite:///{REPO_ROOT / 'sentinel.db'}"  # absolute: the same data whatever the working directory
     redis_url: str = ""  # empty = in-process store; docker-compose sets redis://redis:6379/0
-    opa_url: str = "http://localhost:8181"
-    opa_enabled: bool = False
     # Local-first: bind to loopback by default (MCP Streamable HTTP guidance / DNS-rebinding defence).
     gateway_host: str = "127.0.0.1"
     gateway_port: int = 8443

@@ -97,6 +97,8 @@ The response contains:
 | GET / POST | `/v1/leases` · `/v1/leases/{id}/revoke` | capability leases |
 | GET | `/v1/session/status` | posture summary (used by `sentinel_status`) |
 | GET | `/v1/dashboard/summary` | dashboard counters |
+| GET | `/v1/entities` | per-caller behavioural baselines (UEBA), most anomalous first |
+| GET | `/v1/entities/{subject}` | one caller's learned baseline, hour-of-day activity and recent anomalies |
 
 ## Policy
 
@@ -113,5 +115,5 @@ The response contains:
 | GET | `/health` | liveness, store backend, version |
 | POST | `/v1/demo/token?role=&subject=&mfa=` | demo JWT (demo mode, loopback clients only) |
 | GET | `/v1/auth/whoami` | identity seen by Sentinel |
-| GET | `/v1/integrations/claude-desktop` | ready-to-paste Claude Desktop and Claude Code configuration and CLI commands |
+| GET | `/v1/integrations/claude-desktop` | ready-to-paste Claude Desktop and Claude Code configuration and CLI commands, this computer's Claude Desktop status (installed, bypassing servers and extensions) and the MCP clients connected right now |
 | GET | `/v1/integrations/info` | API and dashboard URLs, auth mode, approval wait |

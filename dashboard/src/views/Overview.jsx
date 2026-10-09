@@ -33,6 +33,7 @@ export default function Overview({ summary, onReceipt }) {
           <StatTile label="Rug-pull alerts" value={s.rug_pulls} hint={`${s.tool_changes} open definition changes`} tone={s.rug_pulls ? "critical" : ""} onClick={() => routeTo("/integrity")} />
           <StatTile label="High-severity alerts" value={s.behavior_alerts} hint="rug pulls, runtime & output anomalies (24h)" tone={s.behavior_alerts ? "warning" : ""} onClick={() => routeTo("/audit")} />
           <StatTile label="Active leases" value={s.active_leases} hint="temporary capability grants" onClick={() => routeTo("/leases")} />
+          <StatTile label="Caller anomalies" value={s.entity_anomalies_24h || 0} hint={`${s.entities || 0} callers profiled (24h)`} tone={s.entity_anomalies_24h ? "warning" : ""} onClick={() => routeTo("/entities")} />
         </div>
       </div>
 
@@ -66,16 +67,19 @@ export default function Overview({ summary, onReceipt }) {
       <div className="grid-2">
         <Card title="Live decisions" subtitle="Every call is decided outside the model and receipted">
           {!receipts.data || receipts.data.length === 0 ? <Empty>No tool calls yet. Connect Claude Desktop (Connect tab) and ask it to use a tool.</Empty> : (
-            <table className="table compact">
-              <thead><tr><th>Tool</th><th>Decision</th><th>Risk</th><th>Why</th><th>When</th></tr></thead>
+            <table className="table compact fixed">
+              <colgroup><col /><col style={{ width: "164px" }} /><col style={{ width: "88px" }} /><col style={{ width: "76px" }} /></colgroup>
+              <thead><tr><th>Tool · why</th><th>Decision</th><th>Risk</th><th>When</th></tr></thead>
               <tbody>
                 {receipts.data.map((r) => (
                   <tr key={r.receipt_id} className="clickable" onClick={() => onReceipt(r)}>
-                    <td className="mono">{r.tool}</td>
+                    <td className="truncate" title={(r.reasons || [])[0]}>
+                      <span className="mono">{r.tool}</span>
+                      <div className="muted small truncate">{(r.reasons || [])[0]}</div>
+                    </td>
                     <td><Pill value={r.decision} kind="decision" /></td>
-                    <td><Meter value={r.risk_score} width={86} /></td>
-                    <td className="truncate">{(r.reasons || [])[0]}</td>
-                    <td className="muted nowrap">{timeAgo(r.timestamp)}</td>
+                    <td><Meter value={r.risk_score} width={72} /></td>
+                    <td className="muted nowrap small">{timeAgo(r.timestamp)}</td>
                   </tr>
                 ))}
               </tbody>

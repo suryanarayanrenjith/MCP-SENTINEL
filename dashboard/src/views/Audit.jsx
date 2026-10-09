@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, usePoll } from "../api.js";
 import { Card, CopyButton, Empty, ErrorNote, Meter, Pill, Tabs } from "../components/ui.jsx";
-import { short, timeAgo } from "../format.js";
+import { parseTime, short, timeAgo } from "../format.js";
 
 function Ledger() {
   const [result, setResult] = useState(null);
@@ -103,7 +103,7 @@ export function Leases({ toast, isAdmin }) {
               <tr key={l.lease_id}>
                 <td><Pill value={l.capability} /></td><td className="mono">{l.tool_name}</td><td>{l.subject}</td>
                 <td className="small">{l.action_bound ? "exact action" : "tool in workflow"}</td>
-                <td><Pill value={l.state} /></td><td className="muted small">{new Date(l.expires_at).toLocaleTimeString()}</td>
+                <td><Pill value={l.state} /></td><td className="muted small">{parseTime(l.expires_at).toLocaleTimeString()}</td>
                 <td className="small">{l.revoked_reason || "—"}</td>
                 <td>{isAdmin && ["ACTIVE", "EXPIRING"].includes(l.state) && <button className="btn btn-sm btn-danger" onClick={async () => { try { await api.post(`/v1/leases/${l.lease_id}/revoke`); toast("Lease revoked"); leases.reload(); } catch (e) { toast(e.message, true); } }}>Revoke</button>}</td>
               </tr>

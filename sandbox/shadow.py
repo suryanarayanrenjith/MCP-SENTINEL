@@ -191,6 +191,7 @@ class DockerBackend:
         self.base = base
         self._probe: tuple[float, bool, str] = (0.0, False, "")
         self._image: tuple[float, bool] = (0.0, False)
+        self._mounts: dict[str, bool] = {}
         self.sysctl_ok = True
 
     def available(self) -> tuple[bool, str]:
@@ -250,6 +251,60 @@ class DockerBackend:
         finally:
             shutil.rmtree(context, ignore_errors=True)
 
+    def mountable(self, path: str | Path) -> bool:
+        """Can the daemon bind-mount this host path? Docker Desktop only sees the folders listed under
+        Settings -> Resources -> File sharing (on Linux just the home folder by default), so a path
+        such as /tmp or /opt fails with "mounts denied". Probed once per folder, then cached."""
+        key = str(Path(path).expanduser().resolve())
+        for known, ok in self._mounts.items():
+            if ok and (key == known or key.startswith(known.rstrip("/") + "/")):
+                return True
+        if key in self._mounts:
+            return self._mounts[key]
+        try:
+            res = subprocess.run(["docker", "run", "--rm", "--network", "none", "-v", f"{key}:/probe:ro", self.settings.sandbox_image, "true"],
+                                 capture_output=True, text=True, timeout=60, env=_docker_cli_env())
+        except (OSError, subprocess.TimeoutExpired):
+            return True  # cannot tell: let the real launch report the problem
+        err = (res.stderr or "").lower()
+        ok = res.returncode == 0 or not any(m in err for m in ("mounts denied", "not shared", "is not known to docker"))
+        self._mounts[key] = ok
+        return ok
+
+    def require_mountable(self, path: str | Path, what: str) -> None:
+        if not self.mountable(path):
+            raise RuntimeError(f"Docker cannot see {path} ({what}). Add it under Docker Desktop -> Settings -> Resources -> "
+                               "File sharing, or move it below your home folder")
+
+    def runtime_file(self, src: str | Path, name: str) -> Path:
+        """A copy of a host file inside the sandbox folder, which Docker can always mount."""
+        dst = self.base / "runtime" / name
+        data = Path(src).read_bytes()
+        if not dst.exists() or dst.read_bytes() != data:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dst.with_suffix(dst.suffix + f".{secrets.token_hex(3)}")
+            tmp.write_bytes(data)
+            os.replace(tmp, dst)
+        return dst
+
+    def app_mount(self, plan: launch.LaunchPlan) -> str:
+        """Host folder to mount read-only as the server's code (a staged copy if Docker cannot see it)."""
+        if not plan.mount or self.mountable(plan.mount):
+            return plan.mount
+        src = Path(plan.mount)
+        stats = [f.stat() for f in src.rglob("*") if f.is_file() and not f.is_symlink()]
+        size = sum(st.st_size for st in stats)
+        if size > 300 * 1024 * 1024:
+            self.require_mountable(plan.mount, "the server's code")
+        newest = max((st.st_mtime_ns for st in stats), default=0)
+        stamp = hashlib.sha256(f"{src.resolve()}:{size}:{newest}".encode()).hexdigest()[:16]
+        dst = self.base / "apps" / stamp
+        if not (dst / ".sentinel-staged").exists():
+            shutil.rmtree(dst, ignore_errors=True)
+            shutil.copytree(src, dst, symlinks=True, ignore=shutil.ignore_patterns("__pycache__", ".git"))
+            (dst / ".sentinel-staged").write_text(str(src), encoding="utf-8")
+        return str(dst)
+
     def _user(self) -> str:
         if hasattr(os, "getuid") and os.getuid() != 0:
             return f"{os.getuid()}:{os.getgid()}"
@@ -265,15 +320,18 @@ class DockerBackend:
                 shutil.rmtree(pkg_dir, ignore_errors=True)
                 pkg_dir.mkdir(parents=True, exist_ok=True)
                 make_writable(pkg_dir)
+                # -w /tmp: uv looks for uv.toml in the working directory, and the image's /home/sandbox
+                # belongs to uid 10001, so running as the host user from there fails with EACCES
                 cmd = ["docker", "run", "--rm", "--name", f"sentinel-install-{plan.install_key[:12]}-{secrets.token_hex(3)}",
-                       "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "-u", self._user(),
+                       "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "-u", self._user(), "-w", "/tmp",
                        "-e", "HOME=/tmp/home", "-e", "npm_config_cache=/tmp/npm-cache", "-e", "UV_CACHE_DIR=/tmp/uv-cache",
-                       "-e", "npm_config_update_notifier=false", "-v", f"{pkg_dir}:{launch.PKG}"]
+                       "-e", "UV_NO_CONFIG=1", "-e", "npm_config_update_notifier=false", "-v", f"{pkg_dir}:{launch.PKG}"]
                 for var in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"):
                     if os.environ.get(var):
                         cmd += ["-e", f"{var}={os.environ[var]}"]
                 ca = _ca_bundle()
                 if ca:
+                    ca = str(self.runtime_file(ca, "host-ca.crt"))
                     cmd += ["-v", f"{ca}:/opt/sentinel/host-ca.crt:ro", "-e", "NODE_EXTRA_CA_CERTS=/opt/sentinel/host-ca.crt",
                             "-e", "SSL_CERT_FILE=/opt/sentinel/host-ca.crt", "-e", "PIP_CERT=/opt/sentinel/host-ca.crt",
                             "-e", "REQUESTS_CA_BUNDLE=/opt/sentinel/host-ca.crt"]
@@ -295,19 +353,21 @@ class DockerBackend:
             for path in (dirs.home, dirs.out, *dirs.ws.values()):
                 make_writable(path)
         shims = _shim_dir(self.base)
+        agent = self.runtime_file(AGENT, "agent.py")
+        app = self.app_mount(plan)
         cmd = ["docker", "run", "-i", "--rm", "--name", name, "--label", "mcp-sentinel.sandbox=1",
                "--network", "none", "--dns", "127.0.0.1", "--read-only", "--tmpfs", "/tmp:rw,size=64m",
                "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128",
                "--memory", self.settings.sandbox_memory, "--cpus", str(self.settings.sandbox_cpus),
                "-u", user, "-w", cwd,
-               "-v", f"{AGENT}:/opt/sentinel/agent.py:ro", "-v", f"{shims}:/opt/sentinel/shims:ro",
+               "-v", f"{agent}:/opt/sentinel/agent.py:ro", "-v", f"{shims}:/opt/sentinel/shims:ro",
                "-v", f"{dirs.out}:/sentinel/out", "-v", f"{dirs.home}:{CONTAINER_HOME}"]
         if self.sysctl_ok:
             cmd += ["--sysctl", "net.ipv4.ip_unprivileged_port_start=0"]
         if pkg_dir is not None:
             cmd += ["-v", f"{pkg_dir}:{launch.PKG}:ro"]
-        if plan.mount:
-            cmd += ["-v", f"{plan.mount}:{launch.APP}:ro"]
+        if app:
+            cmd += ["-v", f"{app}:{launch.APP}:ro"]
         for root in roots:
             if not root.home:
                 cmd += ["-v", f"{dirs.ws[root.index]}:/workspace/{root.index}"]
@@ -423,6 +483,8 @@ class SandboxManager:
     def status(self) -> dict[str, Any]:
         docker_ok, docker_why = self.docker.available() if self.settings.sandbox_mode in {"auto", "docker"} else (False, "not used")
         image = docker_ok and self.docker.image_ready()
+        if image and not self.docker.mountable(self.base):
+            docker_ok, docker_why = False, _sharing_hint(self.base)
         active = "off" if not self.enabled else "docker" if docker_ok and image else (
             "unavailable" if self.settings.sandbox_mode == "docker" else "process")
         return {
@@ -466,6 +528,8 @@ class SandboxManager:
                     self.start_build()
                 why = "the sandbox image is being built"
                 ok = False
+            if ok and not self.docker.mountable(self.base):
+                ok, why = False, _sharing_hint(self.base)
             if ok and state.plan.supported and not state.docker_error:
                 return "docker", ""
             if ok and not state.plan.supported:
@@ -983,6 +1047,11 @@ def _shim_dir(base: Path) -> Path:
             p.chmod(0o755)
         marker.write_text("1", encoding="utf-8")
     return shims
+
+
+def _sharing_hint(path: Path) -> str:
+    return (f"Docker cannot mount the sandbox folder {path}: add it under Docker Desktop -> Settings -> Resources -> "
+            "File sharing, or set SENTINEL_SANDBOX_DIR to a folder below your home directory")
 
 
 def _ca_bundle() -> str:

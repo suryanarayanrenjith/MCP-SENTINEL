@@ -54,16 +54,19 @@ Adjustments:
 | `integrity_drift`, `unreviewed_tool`, `tool_metadata`, `supply_chain` | 0.05–0.6 | discovery / scanner / supply-chain analysis |
 | input soft findings, `prompt_injection_args` | 0.2–0.5 | `sentinel/validation.py`, `sentinel/injection.py` |
 | `sequence_transition` | 0.15–0.5 | e.g. EXTERNAL_LOOKUP → SECRET_ACCESS 0.35; SECRET_ACCESS → DATA_TRANSFER 0.5; EXTERNAL_LOOKUP → CODE_EXECUTION 0.35 |
+| `untrusted_then_sensitive` | 0.3 | a sensitive / exec / infra action after untrusted content was ingested *anywhere* earlier in the workflow (`workflow/analyzer.py`) |
 | `privilege_escalation`, probing, velocity | 0.15–0.4 | `workflow/analyzer.py` |
 | `intent_mismatch` | 0.3 | `workflow/context_engine.py` |
 | `lethal_trifecta`, `confidential_transfer`, `secret_then_egress` | 0.2–0.7 | `dataflow/guard.py` |
 | `behavior_drift`, `runtime`, `sandbox` | up to 0.6–0.9 | behavioural baseline, process monitor, honeypot |
+| `entity_new_sensitive_capability`, `entity_new_agent`, `entity_new_server*`, `entity_off_hours`, `entity_volume_spike`, `entity_denial_history` | 0.08–0.4 | caller behaviour analytics (UEBA) — the call deviates from this user/agent's learned baseline (`monitoring/entity.py`); suppressed while the caller is still being learned |
+| `corroboration` | 0.25 | three or more independent detector categories flagged the same call |
 | `authn_assurance` | 0.25 | the call is sensitive and no MFA context is present |
 | `workflow_memory` | ≤ 0.6 | decayed anomalies from earlier calls in the same workflow |
 
 ### Workflow risk memory
 
-Zero trust re-evaluates continuously, so suspicion carries over between calls. Anomalies (category `anomaly`, `dataflow` or `runtime`, with p ≥ 0.15) are remembered per workflow and keyed by kind. They decay with a half-life of `SENTINEL_RISK_MEMORY_HALF_LIFE_SECONDS` (600 s by default). Before reuse they are damped (× 0.6) and capped at 0.6. When the current call already carries a kind of evidence, the remembered evidence of that kind is excluded, so an honest retry does not push risk up step by step. Structural signals such as the lethal trifecta are recomputed on every call rather than remembered.
+Zero trust re-evaluates continuously, so suspicion carries over between calls. Anomalies (category `anomaly`, `dataflow`, `behavior` or `runtime`, with p ≥ 0.15) are remembered per workflow and keyed by kind. They decay with a half-life of `SENTINEL_RISK_MEMORY_HALF_LIFE_SECONDS` (600 s by default). Before reuse they are damped (× 0.6) and capped at 0.6. When the current call already carries a kind of evidence, the remembered evidence of that kind is excluded, so an honest retry does not push risk up step by step. Structural signals such as the lethal trifecta are recomputed on every call rather than remembered.
 
 ## Explainability: the risk waterfall
 
@@ -88,3 +91,18 @@ After a TOTP step-up, `authn_assurance` disappears and the score drops to **59**
 ## Swapping the model
 
 The scoring model is isolated in `risk/engine.py` (`RiskEngine.assess` and `RiskEngine.impact`). The pipeline only builds a list of `Evidence(name, likelihood, reason, category)` and an impact value, so a different fusion function (a Bayesian network, a learned model or a weighted sum) can replace `assess` without touching the gates, the obligations or the receipts.
+## Caller behaviour analytics (UEBA)
+
+Sentinel profiles the *caller*, not only the server. Every executed call updates a per-subject baseline (`monitoring/entity.py`, persisted in the `entity_profiles` table): which tools, servers and capabilities it uses, at which UTC hours, how often (peak calls/minute), through which agents, and how much of that is sensitive. After a short learning window (`LEARN_MIN` = 8 calls) deviations from the baseline become risk evidence with category `behavior`:
+
+| Signal | Meaning |
+|---|---|
+| `entity_new_sensitive_capability` | the subject uses a sensitive capability (SECRET_ACCESS, DATA_TRANSFER, CODE_EXECUTION, INFRASTRUCTURE_CONTROL) for the first time |
+| `entity_new_agent` | a known subject suddenly acts through an agent it has never used — a classic token-reuse / impersonation indicator |
+| `entity_new_server` / `entity_new_server_sensitive` | first use of a server (weighted up when the call is sensitive) |
+| `entity_off_hours` | a sensitive call at an hour the subject is never otherwise active |
+| `entity_volume_spike` | a burst of calls far above the subject's usual peak rate (runaway agent / automation) |
+| `entity_denial_history` | the subject keeps attempting sensitive calls after repeated denials (probing / confused-deputy abuse) |
+
+A brand-new subject is never penalised for doing things for the first time — during the learning window novelty is expected, not anomalous. The dashboard's **Entities** view shows each caller's learned baseline, hour-of-day activity and the anomalies it triggered. This is evidence about the caller and is fused with the server-side detectors by the same risk engine, so "malicious behaviour from the user" and "malicious behaviour from the MCP server" are scored together.
+

@@ -18,7 +18,7 @@ from monitoring.process import classify_children, remote_hosts
 from sentinel import __version__
 from sentinel.config import get_settings
 from sentinel.db import ServerRow, init_db, session_scope
-from sentinel.deps import get_store, set_store
+from sentinel.deps import set_store
 from sentinel.logging import configure_logging
 from sentinel.receipts import AuditStore
 from sentinel.routes import approvals, audit, core, gateway, notifications, policy, reports, sandbox, scans, servers, tools
@@ -131,9 +131,6 @@ async def identity_error_handler(_request: Request, exc: IdentityError) -> JSONR
 
 for module in (core, gateway, servers, scans, sandbox, tools, approvals, audit, policy, notifications, reports):
     app.include_router(module.router)
-
-# Backwards-compatible module attribute (older code imported sentinel.app.store)
-store: StateStore = get_store()
 
 _dist = Path(_settings.static_dashboard_dir)
 if _dist.joinpath("index.html").exists():

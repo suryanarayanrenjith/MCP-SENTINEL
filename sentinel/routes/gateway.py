@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from identity.verifier import IdentityError, IdentityVerifier
+from sentinel import presence
 from sentinel.config import Settings, get_settings
 from sentinel.deps import gateway, get_store, reader
 from sentinel.gateway import Gateway
@@ -36,13 +37,17 @@ class CallBody(BaseModel):
 
 
 @router.get("/v1/mcp/tools/list")
-def tools_list(gw: Gateway = Depends(gateway), _identity=Depends(reader)) -> dict[str, Any]:
+def tools_list(gw: Gateway = Depends(gateway), identity=Depends(reader)) -> dict[str, Any]:
+    if identity is not None:
+        presence.touch(identity.agent_id, identity.subject)
     tools = gw.catalog()
     return {"tools": tools, "version": gw.catalog_version()}
 
 
 @router.get("/v1/mcp/catalog/version")
-def catalog_version(gw: Gateway = Depends(gateway), _identity=Depends(reader)) -> dict[str, Any]:
+def catalog_version(gw: Gateway = Depends(gateway), identity=Depends(reader)) -> dict[str, Any]:
+    if identity is not None:
+        presence.touch(identity.agent_id, identity.subject)
     return {"version": gw.catalog_version(), "count": len(gw.catalog())}
 
 

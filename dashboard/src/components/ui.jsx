@@ -145,6 +145,12 @@ export function ErrorNote({ error }) {
   return <div className="err">⚠ {error}</div>;
 }
 
+/** Placeholder while a request is in flight; the error once it failed. */
+export function Pending({ error, label = "Loading…" }) {
+  if (error) return <ErrorNote error={error} />;
+  return <div className="loading" role="status"><span className="spinner" aria-hidden="true" />{label}</div>;
+}
+
 export function Findings({ items }) {
   if (!items || items.length === 0) return <Empty>No findings.</Empty>;
   return (

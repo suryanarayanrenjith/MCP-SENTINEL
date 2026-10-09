@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from typing import Any
 
-from sentinel.types import Capability, DataClass
+from sentinel.types import Capability, DataClass, FlowRole
 
 # (previous capability, next capability) -> (likelihood, explanation)
 SUSPICIOUS_TRANSITIONS: dict[tuple[Capability, Capability], tuple[float, str]] = {
@@ -93,6 +93,13 @@ class SequentialAnalyzer:
             prev_cap is None or (prev_cap, next_cap) not in SUSPICIOUS_TRANSITIONS
         ):
             signals.append(("sequence_lookup_then_secret", 0.2, "SECRET_ACCESS follows an external lookup earlier in the workflow"))
+        # Non-adjacent kill chain: untrusted content ingested *anywhere* earlier, then a sensitive action.
+        sensitive_next = next_cap in {Capability.SECRET_ACCESS, Capability.INFRASTRUCTURE_CONTROL, Capability.CODE_EXECUTION}
+        untrusted_seen = state.untrusted_injection_seen or FlowRole.UNTRUSTED_SOURCE.value in set(state.flow_roles)
+        if sensitive_next and untrusted_seen and (prev_cap is None or (prev_cap, next_cap) not in SUSPICIOUS_TRANSITIONS):
+            why = ("a tool output carried a prompt injection" if state.untrusted_injection_seen else "untrusted external content was ingested")
+            signals.append(("untrusted_then_sensitive", 0.3,
+                            f"{next_cap.value} after {why} earlier in this workflow (indirect-injection kill chain)"))
         if len(state.capabilities) >= 2:
             ladder = [Capability(c) for c in state.capabilities[-3:]] + [next_cap]
             ranks = [ESCALATION_ORDER.index(c) for c in ladder]

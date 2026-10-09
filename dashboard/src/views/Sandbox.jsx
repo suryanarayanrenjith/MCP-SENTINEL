@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { api, usePoll } from "../api.js";
 import { SandboxPreview } from "../components/sandbox.jsx";
-import { Card, Drawer, Empty, ErrorNote, Pill, StatTile } from "../components/ui.jsx";
+import { Card, Drawer, Empty, ErrorNote, Pending, Pill, StatTile } from "../components/ui.jsx";
 import { timeAgo } from "../format.js";
 
 function StatusCard({ isAdmin, toast }) {
   const status = usePoll(() => api.get("/v1/sandbox/status"), [], 4000);
   const [error, setError] = useState("");
   const s = status.data;
-  if (!s) return <Card title="Sandbox"><ErrorNote error={status.error || "Loading…"} /></Card>;
+  if (!s) return <Card title="Sandbox engine"><Pending error={status.error} label="Checking Docker…" /></Card>;
   async function build() {
     setError("");
     try {

@@ -120,7 +120,7 @@ Measured with the official Filesystem server on Docker: ~1.2 s per pre-flight (c
 * A server can still behave differently in the sandbox (environment fingerprinting, time bombs). The evasion check catches file changes it makes for real, not network actions taken only for real. Remote effects have no undo.
 * The process backend is not a security boundary (same OS user). Use Docker for containment.
 * Pre-flight doubles the work of each call and serialises calls to the same server while one is verified.
-* Docker Desktop must be able to bind-mount `~/.mcp-sentinel` and the server's folders (the defaults under your home folder are shared).
+* Docker Desktop (Linux and macOS) can only bind-mount folders listed under **Settings → Resources → File sharing**; on Linux that is just your home folder by default, so `/tmp` or `/opt` are refused. Sentinel probes each folder once: its own sandbox folder (`~/.mcp-sentinel/sandbox`) must be shared, and the code of a `python script.py` / `node script.js` server outside a shared folder is copied into the sandbox folder first. If the sandbox folder itself is not shared, the dashboard and `mcp-sentinel doctor` say so and the process backend is used. Docker Engine without Desktop can mount anything.
 * When Sentinel itself runs in Docker Compose, its container has no Docker CLI or socket, so it uses the process backend. Giving it the host's Docker socket would enable the Docker backend, but it also hands Sentinel control of the host's Docker. Prefer running Sentinel directly on the host for the full sandbox.
 
 ## Alternatives considered

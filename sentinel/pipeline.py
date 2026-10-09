@@ -26,13 +26,14 @@ from identity.verifier import IdentityError, IdentityVerifier
 from integrity.crypto import canonical_hash
 from integrity.registry import IntegrityRegistry
 from mfa.stepup import StepUpManager
+from monitoring import entity
 from monitoring.baseline import drift_likelihood
 from policy import rules as policy_rules
 from policy.engine import PolicyEngine
 from risk.engine import Evidence, RiskEngine
 from risk.memory import RiskMemory
 from sentinel.config import Settings
-from sentinel.db import ApprovalRow, PolicyRuleRow, RuntimeFlagRow, ToolChangeRow, WorkflowCallRow
+from sentinel.db import ApprovalRow, EntityProfileRow, PolicyRuleRow, RuntimeFlagRow, ToolChangeRow, WorkflowCallRow
 from sentinel.dlp import redact_structure
 from sentinel.injection import InjectionGuard
 from sentinel.leases import CapabilityLeaseManager
@@ -120,6 +121,7 @@ class ControlPlane:
         gates: list[dict[str, str]] = []
         self.last_call_id = None
         self.last_context = {}
+        self._entity_ctx = None
 
         def gate(name: str, status: str, detail: str = "") -> None:
             gates.append({"gate": name, "status": status, "detail": detail[:300]})
@@ -273,14 +275,6 @@ class ControlPlane:
             destination=extra_dest,
             lease_active=lease is not None,
             mfa_for_request=mfa_ok,
-            opa_input={
-                "token_valid": identity.token_valid,
-                "roles": identity.roles,
-                "server_status": server.trust_status,
-                "tool_status": tool.trust_status,
-                "capability": primary.value,
-                "destination": dest_str,
-            },
             capabilities=capabilities,
             destinations=[d.raw for d in destinations],
             rule_matches=matches,
@@ -328,6 +322,31 @@ class ControlPlane:
         sensitive = bool(set(capabilities) & SENSITIVE_CAPABILITIES)
         if sensitive and not mfa_ok:
             evidence.append(Evidence("authn_assurance", 0.25, "MFA authentication context not present", "obligation", memorable=False))
+
+        # Entity behaviour analytics: is this call normal for THIS caller (user / agent)?
+        row = self.session.get(EntityProfileRow, identity.subject)
+        entity_profile = entity.normalize(row.profile if row else None, identity.subject)
+        ent = entity.assess(
+            entity_profile, agent_id=identity.agent_id, server_id=server.server_id,
+            exposed_name=tool.exposed_name or tool.tool_name, capability=primary, sensitivity=sensitivity,
+            recent_calls_last_minute=wf.recent_calls_last_minute,
+        )
+        for name, p, why in ent.evidence:
+            evidence.append(Evidence(name, p, why, "behavior"))
+            reasons.append(why)
+        self._entity_ctx = {
+            "profile": entity_profile, "agent_id": identity.agent_id, "server_id": server.server_id,
+            "exposed_name": tool.exposed_name or tool.tool_name, "capability": primary,
+            "sensitivity": sensitivity, "recent": wf.recent_calls_last_minute, "anomalies": ent.anomalies,
+        }
+        if ent.evidence:
+            worst = max(p for _, p, _ in ent.evidence)
+            if worst >= 0.25:
+                self.audit.write_event(
+                    "entity_anomaly", "HIGH" if worst >= 0.3 else "MEDIUM", f"{identity.subject}: {ent.anomalies[0]}",
+                    {"subject": identity.subject, "agent": identity.agent_id, "tool": tool.exposed_name, "anomalies": ent.anomalies[:5]},
+                )
+
         remembered = self.memory.evidence(request.workflow_id, exclude={e.name for e in evidence})
         if remembered is not None:
             evidence.append(remembered)
@@ -371,6 +390,12 @@ class ControlPlane:
                 record=(primary, data_class, flow_roles, dest_str, False),
             ), identity
         gate("dataflow", "warn" if df.signals else "pass", df.reasons[0] if df.reasons else "no sensitive flow")
+
+        # Corroboration: when several independent detectors agree, raise confidence (catch real multi-signal attacks).
+        corroborating = {e.name for e in evidence if e.likelihood >= 0.2 and e.category in {"anomaly", "dataflow", "behavior", "runtime"}}
+        if len(corroborating) >= 3:
+            evidence.append(Evidence("corroboration", 0.25,
+                                     f"{len(corroborating)} independent detectors agree this call is risky", "anomaly", memorable=False))
 
         # 11. risk + response ---------------------------------------------------------------------------------
         risk = self.risk.assess(evidence, impact, impact_reasons=impact_reasons)
@@ -456,6 +481,7 @@ class ControlPlane:
                 "impact": risk.impact,
                 "final_risk": risk.score,
                 "decision": decision.value,
+                "entity_anomalies": ent.anomalies,
                 "mfa_satisfied": mfa_ok,
                 "lease_id": lease_id,
                 "restrictions": restrictions,
@@ -607,6 +633,41 @@ class ControlPlane:
         self.last_call_id = row.id
         return row
 
+    def _update_entity(self, request: ToolCallRequest, identity: IdentityContext, capability: Capability | None,
+                       decision: Decision, explain: dict[str, Any]) -> None:
+        """Fold this decision into the caller's behavioural baseline (skips calls still awaiting a person)."""
+        if decision in {Decision.MFA_REQUIRED, Decision.HUMAN_APPROVAL}:
+            return
+        ctx = self._entity_ctx
+        if ctx is None:  # a gate denied the call before entity analysis ran: record it as a denial
+            row = self.session.get(EntityProfileRow, identity.subject)
+            ctx = {
+                "profile": entity.normalize(row.profile if row else None, identity.subject),
+                "agent_id": identity.agent_id, "server_id": request.server_id,
+                "exposed_name": explain.get("exposed_name") or request.tool_name,
+                "capability": capability or Capability.READ,
+                "sensitivity": Sensitivity(explain.get("sensitivity") or "LOW"), "recent": 0, "anomalies": [],
+            }
+        profile = ctx["profile"]
+        entity.record(
+            profile, allowed=decision in EXECUTABLE_DECISIONS, agent_id=ctx["agent_id"], server_id=ctx["server_id"],
+            exposed_name=ctx["exposed_name"], capability=ctx["capability"], sensitivity=ctx["sensitivity"],
+            recent_calls_last_minute=ctx["recent"],
+        )
+        row = self.session.get(EntityProfileRow, identity.subject)
+        if row is None:
+            row = EntityProfileRow(subject=identity.subject)
+            self.session.add(row)
+        row.profile = profile
+        row.calls = int(profile.get("calls") or 0)
+        row.denied = int(profile.get("denied") or 0)
+        if ctx["anomalies"]:
+            row.anomalies = int(row.anomalies or 0) + len(ctx["anomalies"])
+            row.last_anomaly = ctx["anomalies"][0][:300]
+        row.updated_at = utcnow()
+        self.session.commit()
+        self._entity_ctx = None
+
     def _deny(
         self,
         request: ToolCallRequest,
@@ -683,6 +744,7 @@ class ControlPlane:
                 flow_roles=roles if allowed else [], destination=dest, subject=identity.subject,
                 resource=str((explain or {}).get("resources", [""])[0] or ""),
             )
+            self._update_entity(request, identity, capability, decision, explain or {})
         return SecurityDecision(
             decision=decision,
             risk=risk,

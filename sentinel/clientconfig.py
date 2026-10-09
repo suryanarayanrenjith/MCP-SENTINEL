@@ -122,6 +122,39 @@ def to_registration(name: str, spec: Mapping[str, Any]) -> dict[str, Any] | None
     return None
 
 
+def claude_desktop_status(explicit: str | None = None) -> dict[str, Any]:
+    """Is Sentinel installed in Claude Desktop, and does anything there bypass it?
+
+    Bypasses are other MCP servers in ``claude_desktop_config.json`` and enabled Desktop Extensions
+    (``Claude Extensions Settings/<id>.json``): Claude reaches those directly, without Sentinel.
+    """
+    path = find_claude_desktop_config(explicit)
+    status: dict[str, Any] = {"config_path": str(path), "exists": path.exists(), "installed": False,
+                              "unprotected_servers": [], "extensions": [], "error": ""}
+    try:
+        config = load_json(path)
+    except (OSError, ValueError) as exc:
+        status["error"] = f"cannot read {path.name}: {exc}"
+        return status
+    servers = config.get("mcpServers") if isinstance(config.get("mcpServers"), dict) else {}
+    status["installed"] = any(isinstance(spec, dict) and is_sentinel_entry(name, spec) for name, spec in servers.items())
+    status["unprotected_servers"] = sorted(n for n, spec in extract_servers(config).items() if not spec.get("disabled"))
+    settings_dir = path.parent / "Claude Extensions Settings"
+    for file in sorted(settings_dir.glob("*.json")) if settings_dir.is_dir() else []:
+        try:
+            enabled = bool(json.loads(file.read_text(encoding="utf-8")).get("isEnabled"))
+        except (OSError, ValueError):
+            continue
+        name = file.stem
+        try:
+            manifest = json.loads((path.parent / "Claude Extensions" / file.stem / "manifest.json").read_text(encoding="utf-8"))
+            name = str(manifest.get("display_name") or manifest.get("name") or name)
+        except (OSError, ValueError):
+            pass
+        status["extensions"].append({"id": file.stem, "name": name, "enabled": enabled})
+    return status
+
+
 # -- the Sentinel entry ---------------------------------------------------------------------------
 def sentinel_bridge_entry(api_url: str, *, subject: str = "local-user", role: str = "SECURITY_ADMIN",
                           token: str | None = None, python: str | None = None) -> dict[str, Any]:

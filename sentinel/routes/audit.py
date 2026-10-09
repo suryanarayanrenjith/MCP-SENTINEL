@@ -10,9 +10,12 @@ from sqlalchemy.orm import Session
 from dataflow.taint import TaintStore
 from mfa.stepup import StepUpManager
 from risk.memory import RiskMemory
+from monitoring import entity
+from sentinel import presence
 from sentinel.config import Settings, get_settings
 from sentinel.db import (
     ApprovalRow,
+    EntityProfileRow,
     EventRow,
     LeaseRow,
     ReceiptRow,
@@ -287,4 +290,41 @@ def dashboard_summary(session: Session = Depends(db_session), settings: Settings
         "overall_risk": active_risk,
         "lockdown": get_runtime_flag(session, "lockdown", "off"),
         "store_backend": get_store().backend,
+        "clients": presence.clients(max_age=600),
+        "entities": session.query(EntityProfileRow).count(),
+        "entity_anomalies_24h": session.query(EventRow).filter(
+            EventRow.event_type == "entity_anomaly", EventRow.timestamp >= window).count(),
+    }
+
+
+@router.get("/v1/entities")
+def list_entities(session: Session = Depends(db_session), _r=Depends(reader)) -> list[dict[str, Any]]:
+    """Behavioural baseline for every caller (user / agent), most active first."""
+    rows = session.query(EntityProfileRow).order_by(EntityProfileRow.updated_at.desc()).all()
+    out = []
+    for r in rows:
+        out.append({**entity.summary(r.profile or {"subject": r.subject}), "anomalies": r.anomalies,
+                    "last_anomaly": r.last_anomaly, "updated_at": r.updated_at.isoformat() if r.updated_at else None})
+    return sorted(out, key=lambda e: (-e["anomalies"], -e["calls"]))
+
+
+@router.get("/v1/entities/{subject}")
+def get_entity(subject: str, session: Session = Depends(db_session), _r=Depends(reader)) -> dict[str, Any]:
+    row = session.get(EntityProfileRow, subject)
+    if row is None:
+        raise HTTPException(404, f"no behavioural profile for '{subject}' yet")
+    events = [
+        e for e in session.query(EventRow).filter(EventRow.event_type == "entity_anomaly")
+        .order_by(EventRow.timestamp.desc()).limit(300).all()
+        if (e.details or {}).get("subject") == subject
+    ][:20]
+    return {
+        **entity.summary(row.profile or {"subject": subject}),
+        "anomaly_count": row.anomalies,
+        "last_anomaly": row.last_anomaly,
+        "recent_anomalies": [
+            {"at": e.timestamp.isoformat() if e.timestamp else None, "severity": e.severity, "message": e.message,
+             "anomalies": (e.details or {}).get("anomalies", []), "tool": (e.details or {}).get("tool")}
+            for e in events
+        ],
     }

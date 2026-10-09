@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from sqlalchemy import (
@@ -19,6 +19,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.types import TypeDecorator
 
 from sentinel.config import get_settings
 from sentinel.types import utcnow
@@ -28,6 +29,27 @@ log = logging.getLogger("sentinel.db")
 
 class Base(DeclarativeBase):
     pass
+
+
+class UTCDateTime(TypeDecorator):
+    """Timezone-aware UTC datetimes on every backend.
+
+    SQLite drops tzinfo on round-trip, so without this the API would emit naive timestamps
+    that browsers read as local time (hours off for anyone not on UTC).
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Any) -> datetime | None:
+        if value is not None and value.tzinfo is not None:
+            value = value.astimezone(timezone.utc)
+        return value
+
+    def process_result_value(self, value: datetime | None, dialect: Any) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value
 
 
 class ServerRow(Base):
@@ -40,10 +62,10 @@ class ServerRow(Base):
     endpoint: Mapped[str] = mapped_column(String(512))
     transport: Mapped[str] = mapped_column(String(32), default="http")
     trust_status: Mapped[str] = mapped_column(String(32), default="MONITORED")
-    registration_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    registration_time: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     approved_capabilities: Mapped[list[Any]] = mapped_column(JSON, default=list)
     integrity_hash: Mapped[str] = mapped_column(String(128), default="")
-    last_verification_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_verification_time: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     risk_state: Mapped[str] = mapped_column(String(32), default="MONITOR")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     # --- live upstream connection / discovery -------------------------------------------------
@@ -53,7 +75,7 @@ class ServerRow(Base):
     config_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
     server_info: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=dict)
     pinned_server_info: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=dict)
-    last_discovery_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_discovery_time: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     discovery_status: Mapped[str | None] = mapped_column(String(32), nullable=True, default="NEVER")
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
     findings: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True, default=list)
@@ -76,7 +98,7 @@ class ToolRow(Base):
     implementation_fingerprint: Mapped[str] = mapped_column(String(128), default="")
     description: Mapped[str] = mapped_column(Text, default="")
     resource: Mapped[str] = mapped_column(String(256), default="")
-    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     # --- TOFU pinning / rug-pull detection ----------------------------------------------------
     title: Mapped[str | None] = mapped_column(String(256), nullable=True, default="")
     exposed_name: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
@@ -91,7 +113,7 @@ class ToolRow(Base):
     removed: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
     profile_locked: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
     baseline: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=dict)
-    first_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=utcnow)
+    first_seen: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, default=utcnow)
     last_change_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
 
 
@@ -110,7 +132,7 @@ class ReceiptRow(Base):
     reasons: Mapped[list[Any]] = mapped_column(JSON, default=list)
     previous_tools: Mapped[list[Any]] = mapped_column(JSON, default=list)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
     # --- tamper-evident hash chain -------------------------------------------------------------
     seq: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True, index=True)
     prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
@@ -127,8 +149,8 @@ class LeaseRow(Base):
     capability: Mapped[str] = mapped_column(String(64))
     tool_name: Mapped[str] = mapped_column(String(256))
     state: Mapped[str] = mapped_column(String(32), default="ACTIVE")
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     revoked_reason: Mapped[str] = mapped_column(String(512), default="")
     server_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default="")
     scope_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
@@ -142,15 +164,15 @@ class ApprovalRow(Base):
     tool_name: Mapped[str] = mapped_column(String(256))
     subject: Mapped[str] = mapped_column(String(256))
     status: Mapped[str] = mapped_column(String(32), default="PENDING")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     resolver: Mapped[str] = mapped_column(String(256), default="")
     request_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     server_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default="")
     request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="", index=True)
     risk_score: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     reasons: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True, default=list)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     consumed: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
 
 
@@ -162,7 +184,7 @@ class EventRow(Base):
     severity: Mapped[str] = mapped_column(String(32))
     message: Mapped[str] = mapped_column(Text)
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
 
 
 class WorkflowCallRow(Base):
@@ -176,7 +198,7 @@ class WorkflowCallRow(Base):
     destination: Mapped[str] = mapped_column(String(512), default="")
     data_class: Mapped[str] = mapped_column(String(32), default="INTERNAL")
     allowed: Mapped[bool] = mapped_column(Boolean, default=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     server_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default="")
     decision: Mapped[str | None] = mapped_column(String(32), nullable=True, default="")
     risk_score: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
@@ -201,9 +223,9 @@ class ToolChangeRow(Base):
     old_definition: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     new_definition: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(32), default="OPEN", index=True)
-    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    detected_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
     resolved_by: Mapped[str] = mapped_column(String(256), default="")
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
 class MfaEnrollmentRow(Base):
@@ -212,7 +234,7 @@ class MfaEnrollmentRow(Base):
     subject: Mapped[str] = mapped_column(String(256), primary_key=True)
     secret_encrypted: Mapped[str] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     last_step: Mapped[int] = mapped_column(Integer, default=0)  # replay protection
 
 
@@ -227,7 +249,7 @@ class PolicyRuleRow(Base):
     effect: Mapped[str] = mapped_column(String(32))
     reason: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[str] = mapped_column(String(256), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 
 class RuntimeFlagRow(Base):
@@ -235,7 +257,7 @@ class RuntimeFlagRow(Base):
 
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     updated_by: Mapped[str] = mapped_column(String(256), default="")
 
 
@@ -245,7 +267,7 @@ class SandboxRunRow(Base):
     __tablename__ = "sandbox_runs"
 
     run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
     server_id: Mapped[str] = mapped_column(String(128), index=True, default="")
     tool_name: Mapped[str] = mapped_column(String(256), default="")
     exposed_name: Mapped[str] = mapped_column(String(300), default="")
@@ -269,7 +291,7 @@ class UndoRow(Base):
     __tablename__ = "undo_journal"
 
     undo_id: Mapped[str] = mapped_column(String(64), primary_key=True)  # the call's receipt id
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
     server_id: Mapped[str] = mapped_column(String(128), index=True, default="")
     tool_name: Mapped[str] = mapped_column(String(256), default="")
     exposed_name: Mapped[str] = mapped_column(String(300), default="")
@@ -281,8 +303,22 @@ class UndoRow(Base):
     evasion: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     report: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     path: Mapped[str] = mapped_column(String(1024), default="")
-    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    restored_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     restored_by: Mapped[str] = mapped_column(String(256), default="")
+
+
+class EntityProfileRow(Base):
+    """Learned behavioural baseline for one caller (subject): the UEBA profile JSON."""
+
+    __tablename__ = "entity_profiles"
+
+    subject: Mapped[str] = mapped_column(String(256), primary_key=True)
+    profile: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    calls: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    denied: Mapped[int] = mapped_column(Integer, default=0)
+    anomalies: Mapped[int] = mapped_column(Integer, default=0)  # lifetime count of behavioural anomalies
+    last_anomaly: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
 
 
 class VulnScanRow(Base):
@@ -300,7 +336,7 @@ class VulnScanRow(Base):
     worst: Mapped[str] = mapped_column(String(16), default="NONE")
     summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     report: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
     created_by: Mapped[str] = mapped_column(String(256), default="")
 
 

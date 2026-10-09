@@ -7,6 +7,7 @@ import Alerts from "./views/Alerts.jsx";
 import Approvals, { ApprovalPage } from "./views/Approvals.jsx";
 import Audit, { Leases } from "./views/Audit.jsx";
 import Connect from "./views/Connect.jsx";
+import Entities from "./views/Entities.jsx";
 import Integrity from "./views/Integrity.jsx";
 import Overview from "./views/Overview.jsx";
 import Policy from "./views/Policy.jsx";
@@ -25,6 +26,7 @@ const NAV = [
   ["sandbox", "Sandbox", "⧉"],
   ["alerts", "Alerts", "🔔"],
   ["workflows", "Workflows", "⇢"],
+  ["entities", "Entities", "👤"],
   ["audit", "Audit", "≣"],
   ["leases", "Leases", "⏱"],
   ["policy", "Policy", "⚖"],
@@ -132,6 +134,17 @@ function ReceiptDrawer({ receipt, onClose }) {
   );
 }
 
+function ClientStatus({ clients }) {
+  const desktop = (clients || []).filter((c) => c.name.startsWith("Claude"));
+  const on = desktop.filter((c) => c.connected);
+  return (
+    <a className="small client-status" href="#/connect" title="Clients connected through the Sentinel bridge">
+      <span className={`client-dot ${on.length ? "on" : ""}`} aria-hidden="true" />
+      {on.length ? `${on[0].name.replace(" (agent mode)", "")} connected` : "Claude not connected"}
+    </a>
+  );
+}
+
 function InboxPopup({ inbox, onDismiss }) {
   const items = [...(inbox?.mfa || []), ...(inbox?.approvals || [])];
   if (items.length === 0) return null;
@@ -213,6 +226,7 @@ export default function App() {
       case "approvals": return <Approvals inbox={inbox.data} />;
       case "approve": return <ApprovalPage kind={route[1]} id={route[2]} session={session} toast={toast} />;
       case "workflows": return <Workflows selected={sub} />;
+      case "entities": return <Entities selected={sub} />;
       case "audit": return <Audit onReceipt={setReceipt} />;
       case "leases": return <Leases {...common} />;
       case "policy": return <Policy {...common} />;
@@ -244,6 +258,7 @@ export default function App() {
         <div className="sidebar-foot">
           <div className="small">{session.identity ? <>Signed in as <strong>{session.identity.subject}</strong></> : "Not signed in"}</div>
           <div className="small muted">{session.authMode} mode · {s?.store_backend || "…"} store</div>
+          <ClientStatus clients={s?.clients} />
           <div className="row gap">
             <button className="btn btn-sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "Light" : "Dark"} theme</button>
             {window.Notification && Notification.permission === "default" && <button className="btn btn-sm" onClick={() => Notification.requestPermission()}>Notify me</button>}

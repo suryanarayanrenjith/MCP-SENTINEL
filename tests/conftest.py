@@ -10,7 +10,6 @@ TMP = Path(tempfile.mkdtemp(prefix="sentinel-tests-"))
 os.environ["SENTINEL_DATABASE_URL"] = f"sqlite:///{(TMP / 'initial.db').as_posix()}"
 os.environ["SENTINEL_AUTH_MODE"] = "demo"
 os.environ["SENTINEL_REDIS_URL"] = ""
-os.environ["SENTINEL_OPA_ENABLED"] = "false"
 os.environ["SENTINEL_DEMO_JWT_SECRET"] = "test-secret-not-for-production"
 os.environ["SENTINEL_JWT_ISSUER"] = "http://localhost:8080/realms/mcp-sentinel"
 os.environ["SENTINEL_JWT_AUDIENCE"] = "mcp-sentinel"

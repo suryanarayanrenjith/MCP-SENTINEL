@@ -64,14 +64,14 @@ Dashboard (React) ──REST /v1────────────────
 | `sentinel/routes/` | REST API (core, gateway, servers, scans, sandbox, tools, approvals, audit, policy) |
 | `sentinel/preflight.py` · `sentinel/safety.py` | what the gateway does with a sandbox verdict · the SAFE / CAUTION / NOT SAFE verdict for a server |
 | `sentinel/clientconfig.py` | Claude Desktop / Claude Code / Cursor / VS Code config discovery, parsing and `${VAR}` expansion |
-| `identity/` | OIDC/JWT verification, demo tokens, Keycloak realm |
-| `policy/` | Python PDP, admin rules, OPA/Rego bundle |
+| `identity/` | OIDC/JWT verification, demo tokens, a Keycloak realm for OIDC mode |
+| `policy/` | policy decision point and admin rules |
 | `integrity/` | registry, discovery, poisoning scanner, rug-pull diff, capability inference, supply chain, toxic flows, vulnerability scanner (`vulnscan.py`, SecureMCP port) |
 | `risk/` | evidence-fusion engine and workflow risk memory |
 | `workflow/` | sequential analyser and context/intent engine |
 | `dataflow/` | data classification, exfiltration guard, content taint |
 | `mfa/` | TOTP, enrolment, step-up challenges |
-| `monitoring/` | process monitor and statistical behavioural baselines |
+| `monitoring/` | process monitor, per-tool statistical behavioural baselines, and per-caller behaviour analytics (UEBA, `entity.py`) |
 | `sandbox/` | shadow execution: Docker and process backends, in-container supervisor (`agent.py`), verdict rules, workspace mirrors and undo, launch recipes; plus the honeypot (which also hosts active vulnerability probes) |
 | `dashboard/` | React UI (it never makes security decisions) |
 

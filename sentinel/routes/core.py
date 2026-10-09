@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from identity.tokens import mint_demo_token
-from sentinel import __version__, clientconfig
+from sentinel import __version__, clientconfig, presence
 from sentinel.config import REPO_ROOT, Settings, get_settings
 from sentinel.deps import current_identity, get_store
 from sentinel.types import IdentityContext
@@ -62,16 +61,11 @@ def claude_desktop_entry(settings: Settings) -> dict[str, Any]:
 @router.get("/v1/integrations/claude-desktop")
 def claude_desktop(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     entry = claude_desktop_entry(settings)
-    home = Path.home()
-    paths = {
-        "macOS": str(home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"),
-        "Windows": r"%APPDATA%\Claude\claude_desktop_config.json",
-        "Linux (unofficial builds)": str(home / ".config" / "Claude" / "claude_desktop_config.json"),
-    }
     code_spec = json.dumps({"type": "stdio", **entry})
     return {
         "config": {"mcpServers": {clientconfig.SENTINEL_ENTRY_NAME: entry}},
-        "config_paths": paths,
+        "desktop": clientconfig.claude_desktop_status(),
+        "clients": presence.clients(),
         "cli": f"{sys.executable} -m sentinel.cli install-claude",
         "import_cli": f"{sys.executable} -m sentinel.cli import-claude --replace",
         "claude_code_cli": f"{sys.executable} -m sentinel.cli install-claude-code",

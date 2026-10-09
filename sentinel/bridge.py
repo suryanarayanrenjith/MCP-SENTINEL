@@ -18,6 +18,7 @@ Environment
   SENTINEL_OPEN_BROWSER       open approval pages automatically (default 1)
   SENTINEL_WAIT_SECONDS       how long to hold a call open for approval (default from the API, 50s)
   SENTINEL_WORKFLOW_ID        fixed workflow id (default: per session, rotated after 30 min idle)
+  SENTINEL_AUTOSTART          start the local API if it is not running (default 1; loopback URLs only)
 
 stdout carries only MCP messages; diagnostics go to stderr.
 """
@@ -32,6 +33,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -40,6 +42,9 @@ import httpx
 from sentinel.mcp_frontend import CallContext, McpFrontend, text_result, wait_for_stepup
 
 API_URL = os.environ.get("SENTINEL_API_URL", "http://127.0.0.1:8443").rstrip("/")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = Path.home() / ".mcp-sentinel"
+LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 
 def log(message: str) -> None:
@@ -57,6 +62,53 @@ def open_url(url: str) -> None:
             subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
     except Exception as exc:  # opening a browser is a convenience only
         log(f"could not open browser: {exc}")
+
+
+def api_healthy(base: str) -> bool:
+    try:
+        resp = httpx.get(f"{base}/health", timeout=1.5, trust_env=False)
+        return resp.status_code == 200 and resp.json().get("component") == "mcp-sentinel"
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
+def ensure_api(base: str, wait: float = 30.0) -> bool:
+    """Start the local control plane when Claude launches the bridge before anyone ran ``mcp-sentinel serve``.
+
+    Claude Desktop starts the chat and agent-mode bridges at the same moment, so a file lock makes
+    sure only one of them launches the API; the other waits for it to come up.
+    """
+    if api_healthy(base):
+        return True
+    parts = urlsplit(base)
+    if os.environ.get("SENTINEL_AUTOSTART", "1").lower() in {"0", "false", "no"} or (parts.hostname or "").lower() not in LOOPBACK:
+        return False
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(DATA_DIR / "autostart.lock", "w") as lock:
+        try:
+            import fcntl
+
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except ImportError:  # Windows: no advisory locks; a duplicate start just fails to bind the port
+            pass
+        if not api_healthy(base):
+            log(f"API not running at {base}; starting it (log: {DATA_DIR / 'sentinel.log'})")
+            detach: dict[str, Any] = (
+                {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}  # type: ignore[attr-defined]
+                if sys.platform == "win32" else {"start_new_session": True}
+            )
+            with open(DATA_DIR / "sentinel.log", "ab") as out:
+                subprocess.Popen(
+                    [sys.executable, "-m", "sentinel.cli", "serve", "--host", parts.hostname or "127.0.0.1", "--port", str(parts.port or 8443)],
+                    cwd=str(REPO_ROOT), stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, **detach,
+                )
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            if api_healthy(base):
+                return True
+            time.sleep(0.4)
+    log(f"API did not come up within {wait:.0f}s; see {DATA_DIR / 'sentinel.log'}")
+    return False
 
 
 class ApiClient:
@@ -327,6 +379,7 @@ def main() -> int:
             stream.reconfigure(**kwargs)  # type: ignore[attr-defined]
         except (AttributeError, ValueError):
             pass
+    ensure_api(API_URL)
     return Bridge().run()
 
 

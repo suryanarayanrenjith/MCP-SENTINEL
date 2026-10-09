@@ -119,6 +119,8 @@ code, .mono { font-family: var(--font-mono); font-size: 12.5px; }
 .nav-icon { width: 18px; text-align: center; color: var(--ink-muted); }
 .badge { margin-left: auto; background: var(--critical); color: #fff; border-radius: 999px; font-size: 11px; padding: 0 7px; font-weight: 700; }
 .sidebar-foot { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 12px; }
+.client-status { color: var(--ink-2); display: inline-flex; align-items: center; }
+.client-status:hover { color: var(--ink); text-decoration: none; }
 .main { padding: 24px 28px 64px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .page-head p { max-width: 900px; margin-top: 4px; }
@@ -163,11 +165,18 @@ code, .mono { font-family: var(--font-mono); font-size: 12.5px; }
   padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.02em;
   border: 1px solid var(--border-strong); color: var(--ink-2); background: var(--surface-2);
 }
-.pill.SAFE, .pill.AVAILABLE, .pill.ALLOW, .pill.TRUSTED, .pill.NORMAL, .pill.CLEAN, .pill.APPROVED, .pill.ACCEPTED, .pill.SATISFIED, .pill.ACTIVE, .pill.LOW, .pill.COSMETIC, .pill.AUTO_ACCEPTED { border-color: color-mix(in srgb, var(--good) 60%, transparent); color: var(--good-text); background: color-mix(in srgb, var(--good) 12%, transparent); }
-.pill.INCONCLUSIVE, .pill.RESTORED, .pill.MONITOR, .pill.MONITORED, .pill.INFO, .pill.BENIGN, .pill.EXPIRING, .pill.MEDIUM { border-color: color-mix(in srgb, var(--info) 60%, transparent); color: var(--info); background: color-mix(in srgb, var(--info) 12%, transparent); }
+.pill.SAFE, .pill.AVAILABLE, .pill.ALLOW, .pill.TRUSTED, .pill.NORMAL, .pill.CLEAN, .pill.APPROVED, .pill.ACCEPTED, .pill.SATISFIED, .pill.ACTIVE, .pill.LOW, .pill.COSMETIC, .pill.AUTO_ACCEPTED, .pill.ESTABLISHED { border-color: color-mix(in srgb, var(--good) 60%, transparent); color: var(--good-text); background: color-mix(in srgb, var(--good) 12%, transparent); }
+.pill.INCONCLUSIVE, .pill.RESTORED, .pill.MONITOR, .pill.MONITORED, .pill.INFO, .pill.BENIGN, .pill.EXPIRING, .pill.MEDIUM, .pill.LEARNING { border-color: color-mix(in srgb, var(--info) 60%, transparent); color: var(--info); background: color-mix(in srgb, var(--info) 12%, transparent); }
 .pill.CAUTION, .pill.RESTRICT, .pill.RESTRICTED, .pill.SUSPICIOUS, .pill.CHANGED, .pill.PENDING_REVIEW, .pill.PENDING, .pill.ELEVATED, .pill.REQUIRE_APPROVAL, .pill.REQUIRE_MFA, .pill.OPEN { border-color: color-mix(in srgb, var(--warning) 60%, transparent); color: var(--warn-text); background: color-mix(in srgb, var(--warning) 12%, transparent); }
 .pill.MFA_REQUIRED, .pill.HUMAN_APPROVAL, .pill.HIGH, .pill.HIGH_RISK, .pill.MFA { border-color: color-mix(in srgb, var(--serious) 70%, transparent); color: var(--serious); background: color-mix(in srgb, var(--serious) 12%, transparent); }
 .pill.UNSAFE, .pill.DANGEROUS, .pill.BLOCK, .pill.BLOCKED, .pill.QUARANTINED, .pill.QUARANTINE, .pill.CRITICAL, .pill.MALICIOUS, .pill.MALICIOUS_OR_COMPROMISED, .pill.REJECTED, .pill.DENIED, .pill.REVOKED, .pill.DENY, .pill.EXPIRED { border-color: color-mix(in srgb, var(--critical) 70%, transparent); color: var(--danger-text); background: color-mix(in srgb, var(--critical) 14%, transparent); }
+.hourbars { display: flex; align-items: flex-end; gap: 2px; height: 48px; padding: 4px 0; }
+.hourbar { flex: 1; display: flex; align-items: flex-end; height: 100%; background: var(--surface-2); border-radius: 2px; min-width: 4px; }
+.hourbar-fill { width: 100%; background: var(--accent); border-radius: 2px; min-height: 1px; }
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; }
+.kpi { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; text-align: center; }
+.kpi-v { display: block; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi-l { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); }
 .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .chip { font-family: var(--font-mono); font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2); white-space: nowrap; }
 .chip.SECRET_ACCESS, .chip.CODE_EXECUTION, .chip.INFRASTRUCTURE_CONTROL, .chip.SECRET { border-color: color-mix(in srgb, var(--critical) 50%, transparent); color: var(--danger-text); }
@@ -223,6 +232,8 @@ textarea.input { resize: vertical; }
 .table th { text-align: left; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-muted); padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .table td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; font-variant-numeric: tabular-nums; }
 .table.compact td { padding: 6px 10px; }
+.table.fixed { table-layout: fixed; }
+.table.fixed .truncate { max-width: none; }
 .table tr.clickable { cursor: pointer; }
 .table tr.clickable:hover td { background: var(--surface-hover); }
 .matrix td.yes { color: var(--good-text); text-align: center; font-weight: 700; }
@@ -245,6 +256,20 @@ textarea.input { resize: vertical; }
 .toast.error { border-color: var(--critical); }
 .err { border: 1px solid color-mix(in srgb, var(--critical) 60%, transparent); background: color-mix(in srgb, var(--critical) 10%, transparent); color: var(--danger-text); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px; }
 .notice { border: 1px solid var(--border-strong); padding: 10px 12px; border-radius: var(--radius-sm); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.checks { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.check { display: flex; gap: 10px; align-items: flex-start; padding: 9px 11px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); }
+.check-icon { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #fff; background: var(--good); }
+.check.warn .check-icon { background: var(--warning); color: #241800; }
+.check.bad .check-icon { background: var(--critical); }
+.check.bad { border-color: color-mix(in srgb, var(--critical) 45%, transparent); }
+.check-title { font-weight: 600; }
+.check .mono { word-break: break-all; }
+.client-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-muted); margin-right: 6px; }
+.client-dot.on { background: var(--good-text); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good-text) 25%, transparent); }
+.loading { display: flex; align-items: center; gap: 10px; color: var(--ink-muted); padding: 14px 4px; font-size: 13px; }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
 .empty { color: var(--ink-muted); padding: 18px; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius-sm); }
 .lockdown-banner { background: color-mix(in srgb, var(--critical) 20%, transparent); border: 1px solid var(--critical); color: var(--ink); padding: 10px 14px; border-radius: var(--radius); font-weight: 650; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }

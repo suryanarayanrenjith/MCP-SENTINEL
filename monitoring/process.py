@@ -65,6 +65,13 @@ def _is_loopback(ip: str) -> bool:
         return False
 
 
+def _is_launcher(proc) -> bool:
+    """``npx`` (``npm exec ...``) and ``uv``/``uvx``: they fetch the package from the registry and keep
+    that connection open, but never run the server's code themselves (it runs in a child)."""
+    name = proc.name().lower()
+    return name.startswith(("npm exec", "npx")) or name in {"uv", "uvx", "uv.exe", "uvx.exe"}
+
+
 def _connections(proc) -> list[Any]:
     getter = getattr(proc, "net_connections", None) or getattr(proc, "connections")
     return getter(kind="inet")
@@ -100,6 +107,8 @@ def snapshot(pid: int | None, *, include_files: bool = False) -> ProcessSnapshot
             snap.errors.append(f"{proc.pid}: {type(exc).__name__}")
             continue
         try:
+            if proc.pid == pid and _is_launcher(proc):
+                continue  # registry traffic of the package launcher, not the server
             for conn in _connections(proc):
                 if conn.raddr and getattr(conn.raddr, "ip", None):
                     endpoints.add(f"{conn.raddr.ip}:{conn.raddr.port}")

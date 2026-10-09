@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, usePoll } from "../api.js";
-import { Card, Empty, ErrorNote, Pill } from "../components/ui.jsx";
+import { Card, Empty, ErrorNote, Pending, Pill } from "../components/ui.jsx";
 import { timeAgo } from "../format.js";
 
 const TYPES = [
@@ -42,12 +42,12 @@ function AddChannel({ onAdded, isAdmin }) {
       <div className="row gap wrap">
         <label className="grow">Channel<select className="input" value={form.type} onChange={(e) => set("type", e.target.value)}>
           {TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select></label>
-        <label className="grow">Name <span className="muted small">(optional)</span><input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="#security-approvals" /></label>
+        <label className="grow"><span>Name <span className="muted small">(optional)</span></span><input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="#security-approvals" /></label>
       </div>
-      <label>URL <span className="muted small">{type?.hint}</span>
+      <label><span>URL <span className="muted small">{type?.hint}</span></span>
         <input className="input mono" type="password" autoComplete="off" required value={form.url} onChange={(e) => set("url", e.target.value)} placeholder="https://…" /></label>
-      {form.type === "webhook" && <label>Signing secret <span className="muted small">(optional)</span><input className="input mono" type="password" autoComplete="off" value={form.secret} onChange={(e) => set("secret", e.target.value)} /></label>}
-      {form.type === "ntfy" && <label>Access token <span className="muted small">(optional, for protected topics)</span><input className="input mono" type="password" autoComplete="off" value={form.token} onChange={(e) => set("token", e.target.value)} /></label>}
+      {form.type === "webhook" && <label><span>Signing secret <span className="muted small">(optional)</span></span><input className="input mono" type="password" autoComplete="off" value={form.secret} onChange={(e) => set("secret", e.target.value)} /></label>}
+      {form.type === "ntfy" && <label><span>Access token <span className="muted small">(optional, for protected topics)</span></span><input className="input mono" type="password" autoComplete="off" value={form.token} onChange={(e) => set("token", e.target.value)} /></label>}
       <ErrorNote error={error} />
       <div className="modal-actions"><button className="btn btn-primary" disabled={busy || !isAdmin}>{busy ? "Saving…" : "Add channel"}</button></div>
     </form>
@@ -69,7 +69,7 @@ export default function Alerts({ isAdmin, toast }) {
     }
     setBusy("");
   }
-  if (!c) return <ErrorNote error={cfg.error || "Loading…"} />;
+  if (!c) return <Pending error={cfg.error} />;
   const kinds = new Set(c.kinds);
   const toggle = (k) => {
     const next = kinds.has(k) ? c.kinds.filter((x) => x !== k) : [...c.kinds, k];
