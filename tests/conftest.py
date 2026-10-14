@@ -21,6 +21,7 @@ os.environ["SENTINEL_STATIC_DASHBOARD_DIR"] = str(TMP / "no-dashboard")
 os.environ["SENTINEL_SANDBOX_DIR"] = str(TMP / "sandbox")
 os.environ["SENTINEL_SANDBOX_MODE"] = "process"  # deterministic and fast; the Docker backend has its own test
 os.environ["SENTINEL_SANDBOX_AUDIT_ON_REGISTER"] = "false"  # tests run the audit synchronously where needed
+os.environ["SENTINEL_SEED_DEMO_ACCOUNTS"] = "false"  # auth tests create their own accounts
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

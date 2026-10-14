@@ -6,31 +6,31 @@
 
 :root {
   color-scheme: dark;
-  --bg: #070b08;
-  --bg-elev: #0d140f;
-  --surface: #111a13;
-  --surface-2: #16211a;
-  --surface-hover: #1b2a20;
-  --border: rgba(120, 200, 140, 0.14);
-  --border-strong: rgba(120, 200, 140, 0.28);
-  --ink: #e6f2e8;
-  --ink-2: #a9c3ae;
-  --ink-muted: #6f8a75;
-  --accent: #3ddc84;
-  --accent-ink: #04140a;
-  --accent-soft: rgba(61, 220, 132, 0.14);
+  --bg: #0b0d14;
+  --bg-elev: #11131d;
+  --surface: #141726;
+  --surface-2: #191d2e;
+  --surface-hover: #212640;
+  --border: rgba(121, 137, 249, 0.16);
+  --border-strong: rgba(133, 190, 253, 0.30);
+  --ink: #F0F3FA;
+  --ink-2: #AEB4CC;
+  --ink-muted: #767B93;
+  --accent: #7989F9;
+  --accent-ink: #0a0d1c;
+  --accent-soft: rgba(121, 137, 249, 0.16);
 
-  --good: #0ca30c;
+  --good: #3B8BA1;         /* ALLOW / SAFE — cyan-teal */
   --warning: #fab219;
   --serious: #ec835a;
   --critical: #d03b3b;
-  --info: #3987e5;
-  --violet: #9085e9;
-  --good-text: #4fd36a;
-  --danger-text: #ff7a7a;
+  --info: #5AA6FB;         /* azure */
+  --violet: #747DFA;       /* periwinkle-violet */
+  --good-text: #6FCBE0;
+  --danger-text: #ff8a8a;
   --warn-text: #f5c04a;
 
-  --grid: #2c2c2a;
+  --grid: #23283a;
   --radius: 10px;
   --radius-sm: 6px;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
@@ -40,37 +40,47 @@
 
 [data-theme="light"] {
   color-scheme: light;
-  --bg: #f4f7f4;
+  --bg: #f4f5f7;
   --bg-elev: #ffffff;
   --surface: #ffffff;
-  --surface-2: #f2f6f2;
-  --surface-hover: #e9f1ea;
-  --border: rgba(20, 70, 30, 0.12);
-  --border-strong: rgba(20, 70, 30, 0.24);
-  --ink: #0f1d12;
-  --ink-2: #3c5442;
-  --ink-muted: #6c806f;
-  --accent: #0f8a3c;
+  --surface-2: #f2f3f6;
+  --surface-hover: #e9eaf1;
+  --border: rgba(20, 27, 70,0.12);
+  --border-strong: rgba(20, 27, 70,0.24);
+  --ink: #0f111d;
+  --ink-2: #3c3f54;
+  --ink-muted: #6c6f80;
+  --accent: #434EC9;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(15, 138, 60, 0.1);
+  --accent-soft: rgba(67, 78, 201, 0.1);
   --info: #2a78d6;
   --violet: #4a3aa7;
-  --good-text: #006300;
+  --good-text: #0E7490;
   --danger-text: #b42323;
   --warn-text: #8a5a00;
   --grid: #e1e0d9;
-  --shadow: 0 8px 30px rgba(20, 50, 25, 0.12);
+  --shadow: 0 8px 30px rgba(20, 25, 50,0.12);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { height: 100%; }
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(60% 50% at 82% -6%, rgba(116, 125, 250, 0.10), transparent 60%),
+    radial-gradient(55% 45% at 0% 102%, rgba(84, 168, 190, 0.08), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+[data-theme="light"] body {
+  background:
+    radial-gradient(60% 50% at 82% -6%, rgba(116, 125, 250, 0.08), transparent 60%),
+    radial-gradient(55% 45% at 0% 102%, rgba(84, 168, 190, 0.06), transparent 60%),
+    var(--bg);
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -427,3 +437,38 @@ pre.diff div.hunk { color: var(--info); }
 .replay-item.current { outline: 2px solid var(--info); }
 .replay-item ul { margin: 4px 0 0; padding-left: 18px; }
 .replay-icon { width: 20px; text-align: center; }
+
+/* ── Accounts, org console, login gating (added for multi-tenant RBAC) ───────────────── */
+.app-splash { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: var(--bg); color: var(--ink); }
+.splash-mark { font-size: 42px; color: var(--accent); animation: splash-pulse 1.6s ease-in-out infinite; }
+@keyframes splash-pulse { 0%, 100% { opacity: .5; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.04); } }
+
+.account-chip { display: flex; align-items: center; gap: 9px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.account-avatar { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 13px; color: var(--accent-ink); background: var(--accent); }
+.account-meta { min-width: 0; flex: 1; }
+.account-name { font-weight: 650; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-tag { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--ink-2); }
+.role-tag.admin, .role-tag.individual { color: var(--good-text); border-color: color-mix(in srgb, var(--good) 55%, transparent); }
+.role-tag.employee { color: var(--info); border-color: color-mix(in srgb, var(--info) 55%, transparent); }
+.icon-btn { background: none; border: 1px solid var(--border); color: var(--ink-2); border-radius: var(--radius-sm); width: 28px; height: 28px; cursor: pointer; font-size: 15px; }
+.icon-btn:hover { color: var(--ink); border-color: var(--border-strong); }
+
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; }
+.kpi { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; text-align: center; }
+.kpi-v { display: block; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi-l { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); }
+
+.auth-field2 { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--ink-2); font-weight: 550; flex: 1; min-width: 0; }
+.inline-field { display: inline-flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--ink-muted); }
+.member-edit td { background: var(--surface-2); }
+tr.is-disabled td { opacity: .55; }
+
+.access-list { display: flex; flex-direction: column; gap: 8px; }
+.access-server { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
+.access-server.is-on { border-color: var(--border-strong); background: var(--surface-2); }
+.access-server-head { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.access-server-head strong { font-size: 13px; }
+.access-tools { margin-top: 8px; padding-left: 24px; display: flex; flex-direction: column; gap: 6px; }
+.access-scope { font-size: 12px; color: var(--ink-2); display: inline-flex; gap: 5px; align-items: center; margin-right: 14px; }
+.access-tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; margin-top: 4px; }
+.access-tool { display: inline-flex; gap: 5px; align-items: center; }

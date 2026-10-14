@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     tls_enabled: bool = False
     public_url: str = ""  # externally reachable base URL of the API, used in approval links
     dashboard_url: str = ""  # defaults to public_url when the built dashboard is served by the API
-    static_dashboard_dir: str = str(REPO_ROOT / "dashboard" / "dist")
+    static_dashboard_dir: str = str(REPO_ROOT / "dashboard" / "dist")   # the dashboard SPA, served under /app
+    static_web_dir: str = str(REPO_ROOT / "web" / "dist")               # the landing + auth site, served at /
 
     lease_default_seconds: int = 120
     workflow_ttl_seconds: int = 1800
@@ -66,6 +67,9 @@ class Settings(BaseSettings):
     process_monitor_enabled: bool = True
     process_monitor_interval_seconds: float = 5.0
     background_jobs_enabled: bool = True
+    # Seed ready-to-use demo accounts (an individual + an organization with admin & employees) so the
+    # login-gated dashboard can be tried immediately. Disabled in tests.
+    seed_demo_accounts: bool = True
 
     # Sandbox pre-flight ("shadow execution") for local stdio servers: every call first runs against a
     # throw-away copy of the server's files with decoy credentials; the real call only follows a clean run.

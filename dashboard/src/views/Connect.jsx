@@ -101,9 +101,7 @@ function TotpEnrollment({ session, toast }) {
 export default function Connect({ session, toast }) {
   const claude = usePoll(() => api.get("/v1/integrations/claude-desktop"), [], 5000);
   const c = claude.data;
-  const [subject, setSubject] = useState(session.identity?.subject || "local-user");
-  const [role, setRole] = useState("SECURITY_ADMIN");
-  const [pasted, setPasted] = useState("");
+  const account = session.account || {};
   const configText = c ? JSON.stringify(c.config, null, 2) : "";
   return (
     <div className="stack">
@@ -141,23 +139,15 @@ export default function Connect({ session, toast }) {
         </Card>
       </div>
       <div className="grid-2">
-        <Card title="3 · Your identity" subtitle="Roles always come from the token — never from MCP requests">
-          <p>Signed in as <strong>{session.identity?.subject || "—"}</strong> {(session.identity?.roles || []).map((r) => <Pill key={r} value={r} />)} {session.identity?.mfa_satisfied && <Pill value="MFA" />}</p>
-          {session.authMode === "demo" ? (
-            <div className="row gap wrap">
-              <input className="input input-sm" value={subject} onChange={(e) => setSubject(e.target.value)} />
-              <select className="input input-sm" value={role} onChange={(e) => setRole(e.target.value)}>
-                {["USER", "DEVELOPER", "ANALYST", "SECURITY_ADMIN", "SYSTEM_ADMIN"].map((r) => <option key={r}>{r}</option>)}
-              </select>
-              <button className="btn btn-sm" onClick={() => session.switchTo(subject, role)}>Use demo identity</button>
-              <p className="muted small">Demo mode: Claude Desktop's bridge acts as <span className="mono">local-user</span> by default — sign in as the same subject to approve its step-ups.</p>
-            </div>
-          ) : (
-            <div className="row gap">
-              <input className="input mono" type="password" autoComplete="off" placeholder="Paste an access token from your IdP" value={pasted} onChange={(e) => setPasted(e.target.value)} />
-              <button className="btn btn-sm" onClick={() => session.setToken(pasted)}>Use token</button>
-            </div>
-          )}
+        <Card title="3 · Your account" subtitle="Roles come from your signed session — never from an MCP request">
+          <p>Signed in as <strong>{account.name || account.email || account.account_id || "—"}</strong> <span className="muted small">{account.email}</span></p>
+          <p className="row gap wrap">
+            {(account.roles || []).map((r) => <Pill key={r} value={r} />)}
+            {account.account_type && <Pill value={account.org_role ? `${account.account_type}/${account.org_role}` : account.account_type} />}
+            {account.organization && <span className="muted small">· {account.organization.name}</span>}
+          </p>
+          <p className="muted small">Claude Desktop's local bridge acts as <span className="mono">local-user</span>. The seeded individual account (<span className="mono">you@demo.dev</span>) shares that subject, so it can approve the bridge's step-ups.</p>
+          <button className="btn btn-sm" onClick={session.logout}>Log out</button>
         </Card>
         <Card title="4 · Step-up authenticator" subtitle="Real RFC 6238 TOTP; codes are single-use (replay-protected)">
           <TotpEnrollment session={session} toast={toast} />

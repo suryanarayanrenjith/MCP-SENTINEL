@@ -340,6 +340,56 @@ class VulnScanRow(Base):
     created_by: Mapped[str] = mapped_column(String(256), default="")
 
 
+class OrganizationRow(Base):
+    """A team workspace. Its admin manages members and assigns MCP servers/tools to them."""
+
+    __tablename__ = "organizations"
+
+    org_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(256))
+    slug: Mapped[str] = mapped_column(String(64), index=True)
+    email: Mapped[str] = mapped_column(String(256), default="")
+    industry: Mapped[str] = mapped_column(String(64), default="")
+    size: Mapped[str] = mapped_column(String(32), default="")
+    region: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    created_by: Mapped[str] = mapped_column(String(256), default="")
+
+
+class AccountRow(Base):
+    """A login: an individual, or a member (admin/employee) of an organization."""
+
+    __tablename__ = "accounts"
+
+    account_id: Mapped[str] = mapped_column(String(64), primary_key=True)  # == JWT subject
+    email: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(256), default="")
+    password_hash: Mapped[str] = mapped_column(Text, default="")
+    account_type: Mapped[str] = mapped_column(String(16), default="individual")  # individual | organization
+    org_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default="", index=True)
+    org_role: Mapped[str | None] = mapped_column(String(16), nullable=True, default="")  # admin | employee
+    roles: Mapped[list[Any]] = mapped_column(JSON, default=list)  # Sentinel RBAC roles
+    title: Mapped[str] = mapped_column(String(128), default="")   # free-text job title (e.g. "Security analyst")
+    team: Mapped[str] = mapped_column(String(256), default="")
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+    last_login: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class AssignmentRow(Base):
+    """Which MCP servers (and which of their tools) an organization member may use."""
+
+    __tablename__ = "assignments"
+
+    assignment_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(String(64), index=True)
+    account_id: Mapped[str] = mapped_column(String(64), index=True)  # the member this grant is for
+    server_id: Mapped[str] = mapped_column(String(128))
+    tools: Mapped[list[Any]] = mapped_column(JSON, default=list)  # tool names, or ["*"] for every tool
+    created_by: Mapped[str] = mapped_column(String(256), default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
 _engine = None
 _Session = None
 

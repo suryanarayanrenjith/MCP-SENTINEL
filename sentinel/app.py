@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -21,7 +21,7 @@ from sentinel.db import ServerRow, init_db, session_scope
 from sentinel.deps import set_store
 from sentinel.logging import configure_logging
 from sentinel.receipts import AuditStore
-from sentinel.routes import approvals, audit, core, gateway, notifications, policy, reports, sandbox, scans, servers, tools
+from sentinel.routes import approvals, audit, auth, core, gateway, notifications, org, policy, reports, sandbox, scans, servers, tools
 from sentinel.seed import seed
 from sentinel.store import StateStore
 from sentinel.types import TrustStatus, worse_trust
@@ -129,9 +129,31 @@ async def identity_error_handler(_request: Request, exc: IdentityError) -> JSONR
     return JSONResponse({"detail": exc.message, "code": exc.code}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
 
 
-for module in (core, gateway, servers, scans, sandbox, tools, approvals, audit, policy, notifications, reports):
+for module in (core, auth, org, gateway, servers, scans, sandbox, tools, approvals, audit, policy, notifications, reports):
     app.include_router(module.router)
 
-_dist = Path(_settings.static_dashboard_dir)
-if _dist.joinpath("index.html").exists():
-    app.mount("/", StaticFiles(directory=str(_dist), html=True), name="dashboard")
+# Static sites: the landing + auth site at /, the login-gated dashboard at /app.
+_dash = Path(_settings.static_dashboard_dir)
+_web = Path(_settings.static_web_dir)
+_web_index = _web / "index.html"
+_dash_index = _dash / "index.html"
+
+if _web_index.exists():
+    # The landing/auth site uses history routing, so these paths must fall back to its index.html.
+    @app.get("/auth")
+    @app.get("/auth/{rest:path}")
+    async def _auth_spa(rest: str = "") -> FileResponse:  # noqa: ARG001
+        return FileResponse(_web_index)
+
+if _dash_index.exists():
+    @app.get("/app")
+    async def _app_root() -> FileResponse:
+        return FileResponse(_dash_index)
+
+    app.mount("/app", StaticFiles(directory=str(_dash), html=True), name="dashboard")
+
+if _web_index.exists():
+    app.mount("/", StaticFiles(directory=str(_web), html=True), name="web")
+elif _dash_index.exists():
+    # No landing build yet: serve the dashboard at the root so the app still works.
+    app.mount("/", StaticFiles(directory=str(_dash), html=True), name="dashboard-root")

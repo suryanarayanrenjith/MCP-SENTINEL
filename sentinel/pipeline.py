@@ -32,6 +32,7 @@ from policy import rules as policy_rules
 from policy.engine import PolicyEngine
 from risk.engine import Evidence, RiskEngine
 from risk.memory import RiskMemory
+from sentinel import accounts
 from sentinel.config import Settings
 from sentinel.db import ApprovalRow, EntityProfileRow, PolicyRuleRow, RuntimeFlagRow, ToolChangeRow, WorkflowCallRow
 from sentinel.dlp import redact_structure
@@ -184,6 +185,19 @@ class ControlPlane:
             return self._deny(request, identity, why, "deny.tool_trust", gates,
                               [Evidence("tool_trust", 0.9, why[-1], "gate")], primary), identity
         gate("tool", "pass", f"{tool.trust_status} {','.join(c.value for c in capabilities)}")
+
+        # 4b. organization RBAC: an employee may only use servers/tools their admin assigned ---------
+        if identity.is_org_employee:
+            allowed = accounts.allowed_server_tools(self.session, identity)
+            if not accounts.is_tool_allowed(allowed, server.server_id, tool.tool_name):
+                gate("assignment", "fail", "not assigned to this member")
+                return self._deny(
+                    request, identity,
+                    [f"{tool.exposed_name or tool.tool_name} is not assigned to your account by your organization admin"],
+                    "deny.not_assigned", gates, [Evidence("assignment", 0.9, "tool not assigned to this member", "gate")],
+                    primary, impact_caps=capabilities,
+                ), identity
+            gate("assignment", "pass", "assigned by org admin")
 
         # 5. semantic change / review state --------------------------------------------------------
         if tool.review_state == ReviewState.CHANGED.value:

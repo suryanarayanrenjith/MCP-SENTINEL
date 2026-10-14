@@ -89,6 +89,10 @@ class IdentityVerifier:
             token_valid=True,
             mfa_satisfied=mfa,
             session_id=str(claims.get("sid") or claims.get("session_state") or ""),
+            account_type=str(claims.get("account_type") or ""),
+            org_id=str(claims.get("org_id") or ""),
+            org_role=str(claims.get("org_role") or ""),
+            display_name=str(claims.get("name") or claims.get("display_name") or ""),
         )
 
     def _decode(self, token: str) -> dict[str, Any]:

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, mintDemoToken, safeStorage, setApiToken, usePoll } from "./api.js";
+import { api, setApiToken, usePoll } from "./api.js";
 import { RiskWaterfall } from "./components/charts.jsx";
 import { Drawer, Json, Meter, Pill } from "./components/ui.jsx";
 import { routeTo, timeAgo } from "./format.js";
@@ -16,6 +16,7 @@ import Scanner from "./views/Scanner.jsx";
 import Servers from "./views/Servers.jsx";
 import Tools from "./views/Tools.jsx";
 import Workflows from "./views/Workflows.jsx";
+import OrgConsole from "./views/Org.jsx";
 
 const NAV = [
   ["overview", "Overview", "◈"],
@@ -31,8 +32,20 @@ const NAV = [
   ["leases", "Leases", "⏱"],
   ["policy", "Policy", "⚖"],
   ["scanner", "Scanner", "⌕"],
+  ["team", "Team & Access", "👥"],
   ["connect", "Connect", "⚡"],
 ];
+
+// What an organization employee may see: read-only insight into their own assigned tools and activity.
+const EMPLOYEE_PAGES = new Set(["overview", "tools", "workflows", "audit", "alerts", "entities"]);
+
+function navFor(session) {
+  return NAV.filter(([key]) => {
+    if (key === "team") return session.isOrgAdmin;          // only org admins manage the team
+    if (session.isOrgEmployee) return EMPLOYEE_PAGES.has(key);
+    return true;                                            // individuals & org admins: full control plane
+  });
+}
 
 function useHashRoute() {
   const parse = () => (window.location.hash.replace(/^#\/?/, "") || "overview").split("/").map((p) => decodeURIComponent(p));
@@ -45,63 +58,92 @@ function useHashRoute() {
   return route;
 }
 
+// The /auth site stores the session token in localStorage; read it from the same place.
+function readToken() {
+  try { return window.localStorage.getItem("sentinel-token") || ""; } catch { return ""; }
+}
+
+function toAuth() {
+  window.location.href = "/auth/login";
+}
+
+/** The dashboard is login-gated: a stored token (set by /auth) is required, else we send the
+ *  browser back to the login page. The local stdio bridge is unaffected — it has its own token. */
 function useSession() {
-  const storage = safeStorage();
-  const [token, setTokenState] = useState(() => {
-    const t = (storage && storage.getItem("sentinel-token")) || "";
+  const [token] = useState(() => {
+    const t = readToken();
     setApiToken(t);
     return t;
   });
-  const [identity, setIdentity] = useState(null);
+  const [account, setAccount] = useState(null);
   const [info, setInfo] = useState(null);
   const [error, setError] = useState("");
+  const [ready, setReady] = useState(false);
 
-  const setToken = useCallback((t) => {
-    setApiToken(t);
-    try {
-      if (storage) storage.setItem("sentinel-token", t || "");
-    } catch {
-      /* storage unavailable: keep the token in memory only */
-    }
-    setTokenState(t || "");
-  }, [storage]);
-
-  const switchTo = useCallback(async (subject, role) => {
-    const res = await mintDemoToken(subject, role);
-    setToken(res.access_token);
-  }, [setToken]);
-
-  useEffect(() => {
-    api.get("/v1/integrations/info").then(setInfo).catch((e) => setError(e.message));
+  const logout = useCallback(async () => {
+    try { await api.post("/v1/auth/logout"); } catch { /* best effort */ }
+    try { window.localStorage.removeItem("sentinel-token"); } catch { /* ignore */ }
+    setApiToken("");
+    toAuth();
   }, []);
 
   useEffect(() => {
-    if (!info) return;
-    if (!token && info.auth_mode === "demo") {
-      switchTo("local-user", "SECURITY_ADMIN").catch((e) => setError(`demo sign-in failed: ${e.message}`));
-      return;
-    }
-    if (!token) return;
-    api.get("/v1/auth/whoami")
-      .then((id) => { setIdentity(id); setError(""); })
-      .catch((e) => {
-        if (e.status === 401 && info.auth_mode === "demo") switchTo(identity?.subject || "local-user", "SECURITY_ADMIN").catch(() => {});
-        else setError(e.message);
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, info]);
+    api.get("/v1/integrations/info").then(setInfo).catch(() => {});
+  }, []);
 
-  const roles = identity?.roles || [];
+  useEffect(() => {
+    if (!token) { toAuth(); return; }
+    api.get("/v1/auth/account")
+      .then((acct) => { setAccount(acct); setReady(true); setError(""); })
+      .catch((e) => {
+        if (e.status === 401) { toAuth(); return; }
+        setError(e.message); setReady(true);
+      });
+  }, [token]);
+
+  const roles = account?.roles || [];
+  const type = account?.account_type || "";
+  const orgRole = account?.org_role || "";
   return {
     token,
-    identity,
+    account,
+    ready,
+    identity: account ? { ...account, subject: account.account_id, mfa_satisfied: false } : null,
     authMode: info?.auth_mode || "demo",
     dashboardInfo: info,
     isAdmin: roles.includes("SECURITY_ADMIN") || roles.includes("SYSTEM_ADMIN"),
-    setToken,
-    switchTo,
+    isIndividual: type === "individual" || (!type && !orgRole),
+    isOrgAdmin: type === "organization" && orgRole === "admin",
+    isOrgEmployee: type === "organization" && orgRole === "employee",
+    logout,
     error,
   };
+}
+
+const ROLE_LABEL = {
+  "individual:": "Individual",
+  "organization:admin": "Org admin",
+  "organization:employee": "Employee",
+};
+
+function AccountChip({ account, onLogout }) {
+  if (!account) return <div className="small muted">Signing in…</div>;
+  const kind = ROLE_LABEL[`${account.account_type}:${account.org_role || ""}`] || "Account";
+  const name = account.name || account.email || account.account_id;
+  const initial = (name || "?").trim().charAt(0).toUpperCase();
+  return (
+    <div className="account-chip">
+      <span className="account-avatar" aria-hidden="true">{initial}</span>
+      <div className="account-meta">
+        <div className="account-name" title={account.email}>{name}</div>
+        <div className="small muted">
+          <span className={`role-tag ${account.org_role || account.account_type}`}>{kind}</span>
+          {account.organization && <> · {account.organization.name}</>}
+        </div>
+      </div>
+      <button className="icon-btn" title="Log out" aria-label="Log out" onClick={onLogout}>⎋</button>
+    </div>
+  );
 }
 
 function ReceiptDrawer({ receipt, onClose }) {
@@ -219,7 +261,11 @@ export default function App() {
 
   const content = useMemo(() => {
     const common = { toast, isAdmin: session.isAdmin };
+    if (session.isOrgEmployee && !EMPLOYEE_PAGES.has(page) && !["approve", "overview"].includes(page)) {
+      return <Overview summary={s} onReceipt={setReceipt} />;
+    }
     switch (page) {
+      case "team": return <OrgConsole toast={toast} session={session} />;
       case "servers": return <Servers {...common} selected={sub} />;
       case "tools": return <Tools {...common} selected={sub} />;
       case "integrity": return <Integrity {...common} selected={sub} />;
@@ -239,6 +285,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, sub, route, session.isAdmin, session.identity, session.token, s, inbox.data, toast]);
 
+  if (session.token && !session.ready && !session.error) {
+    return (
+      <div className="app-splash">
+        <div className="splash-mark">◆</div>
+        <div className="loading"><span className="spinner" aria-hidden="true" />Loading your workspace…</div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -247,7 +302,7 @@ export default function App() {
           <div><div className="brand-name">MCP-SENTINEL</div><div className="brand-sub">zero-trust MCP control plane</div></div>
         </div>
         <nav>
-          {NAV.map(([key, label, icon]) => (
+          {navFor(session).map(([key, label, icon]) => (
             <a key={key} href={`#/${key}`} className={page === key || (key === "approvals" && page === "approve") ? "active" : ""}>
               <span className="nav-icon" aria-hidden="true">{icon}</span>{label}
               {key === "approvals" && pendingCount > 0 && <span className="badge">{pendingCount}</span>}
@@ -256,8 +311,7 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-foot">
-          <div className="small">{session.identity ? <>Signed in as <strong>{session.identity.subject}</strong></> : "Not signed in"}</div>
-          <div className="small muted">{session.authMode} mode · {s?.store_backend || "…"} store</div>
+          <AccountChip account={session.account} onLogout={session.logout} />
           <ClientStatus clients={s?.clients} />
           <div className="row gap">
             <button className="btn btn-sm" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "Light" : "Dark"} theme</button>

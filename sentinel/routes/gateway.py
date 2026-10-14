@@ -41,6 +41,11 @@ def tools_list(gw: Gateway = Depends(gateway), identity=Depends(reader)) -> dict
     if identity is not None:
         presence.touch(identity.agent_id, identity.subject)
     tools = gw.catalog()
+    if identity is not None and getattr(identity, "is_org_employee", False):
+        from sentinel import accounts
+
+        allowed = accounts.allowed_server_tools(gw.session, identity)
+        tools = [t for t in tools if accounts.is_tool_allowed(allowed, t.get("server_id", ""), t.get("tool_name", ""))]
     return {"tools": tools, "version": gw.catalog_version()}
 
 

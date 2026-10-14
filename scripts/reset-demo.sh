@@ -49,7 +49,7 @@ SENTINEL_RESET_WIPE="$WIPE" "$PY" - <<'PY'
 import os
 from sentinel.db import (get_session_factory, init_db, ReceiptRow, EventRow, WorkflowCallRow, LeaseRow,
                          ApprovalRow, SandboxRunRow, UndoRow, EntityProfileRow, ToolChangeRow, ToolRow,
-                         ServerRow, VulnScanRow)
+                         ServerRow, VulnScanRow, AccountRow, OrganizationRow, AssignmentRow)
 init_db()
 s = get_session_factory()()
 activity = (ReceiptRow, EventRow, WorkflowCallRow, LeaseRow, ApprovalRow, SandboxRunRow, UndoRow,
@@ -57,7 +57,8 @@ activity = (ReceiptRow, EventRow, WorkflowCallRow, LeaseRow, ApprovalRow, Sandbo
 for m in activity:
     s.query(m).delete()
 if os.environ.get("SENTINEL_RESET_WIPE") == "1":
-    for m in (VulnScanRow, ToolRow, ServerRow):
+    # also clear accounts/orgs so the demo accounts are re-seeded fresh on next startup
+    for m in (AssignmentRow, AccountRow, OrganizationRow, VulnScanRow, ToolRow, ServerRow):
         s.query(m).delete()
 else:
     for t in s.query(ToolRow).all():   # forget learned per-tool behaviour baselines

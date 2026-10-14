@@ -207,6 +207,19 @@ class IdentityContext(BaseModel):
     token_valid: bool = True
     mfa_satisfied: bool = False
     session_id: str | None = None
+    # account / multi-tenancy (empty for legacy demo/OIDC tokens)
+    account_type: str = ""   # "individual" | "organization" | ""
+    org_id: str = ""
+    org_role: str = ""       # "admin" | "employee" | ""
+    display_name: str = ""
+
+    @property
+    def is_org_admin(self) -> bool:
+        return self.account_type == "organization" and self.org_role == "admin"
+
+    @property
+    def is_org_employee(self) -> bool:
+        return self.account_type == "organization" and self.org_role == "employee"
 
 
 class ToolCallRequest(BaseModel):

@@ -37,6 +37,7 @@ Sentinel ships with an **empty registry**: no built-in or demo servers. See **[D
 | **Tool-poisoning scanner** | Hidden `<IMPORTANT>` blocks, instruction overrides, secrecy directives, approval-bypass wording, credential-path references, cross-server shadowing, Unicode-tag / zero-width / bidi / ANSI smuggling, encoded payloads, all checked in descriptions *and* parameter metadata. Tuned on real servers to avoid false positives. |
 | **Content-level taint tracking** | Secrets returned by any tool are redacted for the model and fingerprinted. If those bytes later leave through *any* tool, even URL-, base64- or hex-encoded, the call is hard-blocked. |
 | **Lethal-trifecta breaker** | Per workflow and across the whole toolset: private data + untrusted content + egress is detected, and Sentinel names the smallest set of servers to restrict. |
+| **Accounts, organizations & RBAC** | Real login-gated accounts (hashed passwords, SQLite), as **individuals** or **organizations**. An org admin gets a **Team & Access** console to add/remove members, set passwords and assign exactly which MCP servers and tools each employee may use. Assignments are enforced on every call (an unassigned call is blocked with `deny.not_assigned`) and filter what the employee even sees — not just hidden in the UI. |
 | **Caller behaviour analytics (UEBA)** | Sentinel profiles the *caller*, not just the server: each user / agent gets a learned baseline (tools, servers, capabilities, active hours, sensitive-access rate, agents). Deviations become risk evidence — a first-ever sensitive capability, an unfamiliar agent on a known identity (token reuse), off-hours sensitive access, a volume spike, or sensitive attempts after repeated denials. A new caller is never penalised during its learning window. |
 | **Indirect-injection kill chain** | Beyond the immediately preceding call, a sensitive / code-execution / infrastructure action is flagged when untrusted content was ingested *anywhere* earlier in the workflow (the classic prompt-injection → privileged-action chain). |
 | **Evidence-fusion risk engine** | Risk = likelihood (noisy-OR of independent evidence) × impact (capability, data class, destructiveness, egress), with decaying per-workflow memory, a corroboration boost when several independent detectors agree, and an additive explanation waterfall. Hard policy always wins. |
@@ -51,9 +52,9 @@ Requirements: Python ≥ 3.11, Node 18+ (dashboard and `npx` servers), [uv](http
 **Linux (tested on Pop!_OS 22.04 with Docker Desktop and Claude Desktop for Linux) and macOS:**
 
 ```bash
-make setup            # uv-managed Python 3.12 venv, dashboard build, Docker sandbox image
+make setup            # uv-managed Python 3.12 venv, web + dashboard builds, Docker sandbox image
 make claude           # add Sentinel to Claude Desktop (keeps a backup of your config)
-make run              # API + dashboard on http://127.0.0.1:8443
+make run              # control plane on http://127.0.0.1:8443
 make doctor           # checks Python, Docker, the sandbox, npx/uvx and the Claude Desktop setup
 make reset-demo       # clear demo activity and refresh ~/sentinel-demo (keeps servers)
 ```
@@ -62,11 +63,20 @@ make reset-demo       # clear demo activity and refresh ~/sentinel-demo (keeps s
 
 ```bash
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"
-(cd dashboard && npm install && npm run build)
+(cd web && npm install && npm run build)          # landing + auth site, served at /
+(cd dashboard && npm install && npm run build)    # the dashboard, served at /app
 docker build -t mcp-sentinel/sandbox:1 -f docker/sandbox-runtime.Dockerfile docker/   # or Dashboard → Sandbox → Build image
 .venv/bin/mcp-sentinel install-claude          # Claude Desktop   (or: install-claude-code)
 .venv/bin/mcp-sentinel serve
 ```
+
+**Open http://127.0.0.1:8443** for the landing page, then **sign in** (the dashboard at `/app` is login-gated). Accounts are real: passwords are hashed (PBKDF2) and stored in SQLite, with **individual** and **organization** account types. Seeded demo logins (password `sentinel`):
+
+| Login | Type | Sees |
+|---|---|---|
+| `you@demo.dev` | Individual | the full control-plane dashboard (shares the bridge's `local-user` subject) |
+| `admin@northstar.dev` | Org admin | the dashboard **plus Team & Access**: add/remove members, set passwords, and assign exactly which MCP servers/tools each employee may use |
+| `analyst@northstar.dev` | Org employee | a restricted dashboard and **only the tools the admin assigned** — every unassigned call is blocked (`deny.not_assigned`), whatever a prompt asks for |
 
 You don't even need `make run` before opening Claude: when Claude Desktop launches Sentinel's bridge and the API isn't running, the bridge starts it in the background (`~/.mcp-sentinel/sentinel.log`; stop it with `mcp-sentinel stop`). Claude Desktop **Desktop Extensions** (Settings → Extensions, e.g. the built-in Filesystem one) talk to Claude directly and bypass Sentinel: the dashboard's **Connect** page and `mcp-sentinel doctor` list them so you can turn them off.
 

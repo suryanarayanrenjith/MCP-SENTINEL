@@ -23,3 +23,5 @@ keys/*.key
 *.db-shm
 !keys/.gitkeep
 docker/sandbox-ca/ca.crt
+web/node_modules/
+web/dist/

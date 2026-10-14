@@ -62,10 +62,8 @@ export function ApprovalPage({ kind, id, session, toast }) {
           {!pending && <p className="good-text">This request is {d.status.toLowerCase()}{d.method ? ` (${d.method})` : ""}{d.resolver ? ` by ${d.resolver}` : ""}. The agent's held call continues automatically, or it can retry.</p>}
           {pending && kind === "mfa" && (
             <div className="stack">
-              {!mine && session.authMode === "demo" && (
-                <div className="notice">You are signed in as <strong>{session.identity?.subject || "nobody"}</strong>; the challenge belongs to <strong>{subject}</strong>.
-                  <button className="btn btn-sm" onClick={() => session.switchTo(subject, "SECURITY_ADMIN")}>Switch to {subject}</button>
-                </div>
+              {!mine && (
+                <div className="notice">You are signed in as <strong>{session.identity?.subject || "nobody"}</strong>; this step-up belongs to <strong>{subject}</strong> and must be approved by them.</div>
               )}
               {mine && totp.data?.enrolled && (
                 <form className="row gap" onSubmit={(e) => { e.preventDefault(); run(() => api.post(`/v1/mfa/challenges/${id}/verify`, { code }), "Step-up satisfied"); }}>

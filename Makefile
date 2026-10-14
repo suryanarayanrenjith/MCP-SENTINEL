@@ -3,15 +3,20 @@ PY      := .venv/bin/python
 CLI     := .venv/bin/mcp-sentinel
 IMAGE   := mcp-sentinel/sandbox:1
 
-.PHONY: setup venv dashboard sandbox-image run stop doctor claude claude-code test reset-demo
+.PHONY: setup venv web dashboard frontend sandbox-image run stop doctor claude claude-code test reset-demo
 
-setup: venv dashboard sandbox-image ## everything needed for a local install
-	@printf '\nDone. Next: make claude && make run   (then: make doctor)\n'
+setup: venv frontend sandbox-image ## everything needed for a local install
+	@printf '\nDone. Next: make claude && make run   (then open http://127.0.0.1:8443 and sign in)\n'
 
 venv:
 	@command -v uv >/dev/null || { echo "uv is required: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
 	uv venv --allow-existing --python 3.12 .venv
 	uv pip install --python $(PY) -e ".[dev]"
+
+frontend: web dashboard  ## build the landing/auth site (/) and the dashboard (/app)
+
+web:
+	cd web && npm install --no-audit --no-fund && npm run build
 
 dashboard:
 	cd dashboard && npm install --no-audit --no-fund && npm run build

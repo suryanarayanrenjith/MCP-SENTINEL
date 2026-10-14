@@ -295,8 +295,14 @@ def register(session: Session, settings: Settings, body: RegisterServerBody, reg
 
 
 @router.get("/v1/servers")
-def list_servers(session: Session = Depends(db_session), _r=Depends(reader)) -> list[dict[str, Any]]:
-    return [server_view(r, session) for r in session.query(ServerRow).order_by(ServerRow.registration_time).all()]
+def list_servers(session: Session = Depends(db_session), identity=Depends(reader)) -> list[dict[str, Any]]:
+    rows = session.query(ServerRow).order_by(ServerRow.registration_time).all()
+    if identity is not None and getattr(identity, "is_org_employee", False):
+        from sentinel import accounts
+
+        allowed = accounts.allowed_server_tools(session, identity) or {}
+        rows = [r for r in rows if r.server_id in allowed]
+    return [server_view(r, session) for r in rows]
 
 
 @router.get("/v1/servers/{server_id}")
